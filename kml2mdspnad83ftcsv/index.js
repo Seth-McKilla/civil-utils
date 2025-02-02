@@ -2,10 +2,16 @@ const fs = require("fs");
 const path = require("path");
 const xml2js = require("xml2js");
 const proj4 = require("proj4");
-
+// Define Maryland State Plane coords
+proj4.defs(
+  "EPSG:2248",
+  "+proj=lcc +lat_1=38.3 +lat_2=39.45 +lat_0=37.66666666666666 " +
+    "+lon_0=-77 +x_0=400000.0 +y_0=0 +ellps=GRS80 " +
+    "+towgs84=0,0,0,0,0,0,0 +units=us-ft +no_defs"
+);
 // Define projections
-const fromProj = "EPSG:4326";
-const toProj = "EPSG:2248"; // NAD83 / Maryland (ftUS)
+const wgs84 = "EPSG:4326";
+const nad83MD = "EPSG:2248";
 
 function convertKmlToCsv(inputKml, outputCsv) {
   const parser = new xml2js.Parser();
@@ -22,14 +28,14 @@ function convertKmlToCsv(inputKml, outputCsv) {
       const coords = pm.Point?.[0]?.coordinates?.[0]?.trim().split(",") || [];
       if (coords.length >= 2) {
         const [longitude, latitude, elevation] = coords.map(Number);
-        const [easting, northing] = proj4(fromProj, toProj, [
+        const [easting, northing] = proj4(wgs84, nad83MD, [
           longitude,
           latitude,
         ]);
         csvLines.push(
-          `${name},${northing.toFixed(3)},${easting.toFixed(3)},${(
+          `${name},${northing.toFixed(4)},${easting.toFixed(4)},${(
             elevation || 0
-          ).toFixed(3)},-`
+          ).toFixed(3)},`
         );
       }
     });
