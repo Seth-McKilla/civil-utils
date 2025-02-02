@@ -14,7 +14,7 @@ function convertKmlToCsv(inputKml, outputCsv) {
   parser.parseString(xmlData, (err, result) => {
     if (err) throw err;
 
-    const placemarks = result.kml.Document[0].Placemark || [];
+    const placemarks = result.kml.Document[0].Folder[0].Placemark || [];
     const csvLines = ["Point,Northing,Easting,Elevation,Description"];
 
     placemarks.forEach((pm) => {
