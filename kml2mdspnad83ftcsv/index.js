@@ -1,4 +1,5 @@
 const fs = require("fs");
+const path = require("path");
 const xml2js = require("xml2js");
 const proj4 = require("proj4");
 
@@ -37,5 +38,7 @@ function convertKmlToCsv(inputKml, outputCsv) {
   });
 }
 
-// Example usage:
-// convertKmlToCsv("input.kml", "output.csv");
+// Usage
+const inputPath = path.join(__dirname, "files", "input.kml");
+const outputPath = path.join(__dirname, "files", "output.csv");
+convertKmlToCsv(inputPath, outputPath);
