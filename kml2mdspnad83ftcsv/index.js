@@ -20,10 +20,12 @@ function convertKmlToCsv(inputKml, outputCsv) {
   parser.parseString(xmlData, (err, result) => {
     if (err) throw err;
 
+    let pointNumber = 0;
     const placemarks = result.kml.Document[0].Folder[0].Placemark || [];
     const csvLines = ["Point,Northing,Easting,Elevation,Description"];
 
     placemarks.forEach((pm) => {
+      pointNumber++;
       const name = pm.name?.[0] || "Unknown";
       const coords = pm.Point?.[0]?.coordinates?.[0]?.trim().split(",") || [];
       if (coords.length >= 2) {
@@ -33,9 +35,9 @@ function convertKmlToCsv(inputKml, outputCsv) {
           latitude,
         ]);
         csvLines.push(
-          `${name},${northing.toFixed(4)},${easting.toFixed(4)},${(
+          `${pointNumber},${northing.toFixed(4)},${easting.toFixed(4)},${(
             elevation || 0
-          ).toFixed(3)},`
+          ).toFixed(2)},${name}`
         );
       }
     });
