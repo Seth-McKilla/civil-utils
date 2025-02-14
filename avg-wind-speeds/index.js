@@ -3,9 +3,9 @@
  * 1) Loops over NOAA historical data files for a given station (years 2015–2024).
  * 2) Filters the wind records by direction:
  *     - Only keep rows where the wind direction is within ±(directionTolerance) degrees
- *       of a specified fetchDirection (e.g., 120 ± 30 => keep 90–150°).
+ *       of a specified fetchDirection (e.g., 120 ± 15 => keep 105–135°).
  * 3) From the filtered data, we collect all valid gust speeds.
- * 4) We then take only the top X% of gust speeds (where X = percentileValue; e.g., 10 => top 10%).
+ * 4) We then take only the top X% of gust speeds (where X = percentileValue; e.g., 1 => top 1%).
  * 5) Finally, we compute the average gust speed of that upper subset, and also print the subset’s size.
  *
  * Usage example:
@@ -20,10 +20,10 @@ const zlib = require("zlib");
 
 // For convenience, we’ll read command-line arguments:
 //   1) fetchDirection   (number, e.g. 120)
-//   2) directionRange   (number, e.g. 30)
-//   3) percentileValue  (number, e.g. 10 for upper 10%)
+//   2) directionRange   (number, e.g. 15)
+//   3) percentileValue  (number, e.g. 1 for upper 1%)
 const fetchDirection = parseFloat(process.argv[2]);
-const directionRange = parseFloat(process.argv[3]) || 30;
+const directionRange = parseFloat(process.argv[3]) || 15;
 const percentileValue = parseFloat(process.argv[4]) || 1;
 
 /**
