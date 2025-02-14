@@ -1,7 +1,7 @@
 const https = require("https");
 const zlib = require("zlib");
 
-// Determine meteorological season from month.
+// Determine meteorological season from month (1–12).
 function getSeason(month) {
   if ([12, 1, 2].includes(month)) return "Winter";
   if ([3, 4, 5].includes(month)) return "Spring";
@@ -10,17 +10,15 @@ function getSeason(month) {
   return "Unknown";
 }
 
-// Initialize sum/count records for a season’s wind speed and gust.
+// Each record will track the maximum WSPD and GST for that season in a given year.
 function initSeasonRecord() {
   return {
-    WSPD_sum: 0,
-    WSPD_count: 0,
-    GST_sum: 0,
-    GST_count: 0,
+    WSPD_max: Number.NEGATIVE_INFINITY,
+    GST_max: Number.NEGATIVE_INFINITY,
   };
 }
 
-// Parse raw file text (once fully read/decompressed) into seasonalData object.
+// Parse raw file text into the seasonalData structure.
 function parseFileAsText(fileText, year, seasonalData) {
   const lines = fileText.split("\n");
 
@@ -35,23 +33,20 @@ function parseFileAsText(fileText, year, seasonalData) {
   }
 
   for (const line of lines) {
-    // Skip headers or empty lines
+    // Skip header or empty lines
     if (!line || line.startsWith("#")) continue;
 
-    // Split on whitespace
+    // Columns: YY, MM, DD, hh, mm, WDIR, WSPD, GST, ...
     const columns = line.trim().split(/\s+/);
-    // We expect columns: YY, MM, DD, hh, mm, WDIR, WSPD, GST, ...
-    if (columns.length < 8) {
-      continue;
-    }
+    if (columns.length < 8) continue;
 
+    // We care about year, month, WSPD (col 6), and GST (col 7).
     const fileYear = parseInt(columns[0], 10);
     const month = parseInt(columns[1], 10);
-    // const day = parseInt(columns[2], 10); // day if needed
     const wspd = parseFloat(columns[6]);
     const gst = parseFloat(columns[7]);
 
-    // Filter out missing/suspicious data (e.g., 99.00 or bigger outliers).
+    // Filter out missing or suspicious data (e.g. 99.00).
     if (
       isNaN(wspd) ||
       isNaN(gst) ||
@@ -65,10 +60,14 @@ function parseFileAsText(fileText, year, seasonalData) {
 
     const season = getSeason(month);
     const record = seasonalData[year][season];
-    record.WSPD_sum += wspd;
-    record.WSPD_count += 1;
-    record.GST_sum += gst;
-    record.GST_count += 1;
+
+    // Update max if current row is higher.
+    if (wspd > record.WSPD_max) {
+      record.WSPD_max = wspd;
+    }
+    if (gst > record.GST_max) {
+      record.GST_max = gst;
+    }
   }
 }
 
@@ -78,11 +77,10 @@ function fetchAndProcessYear(year, seasonalData) {
     const url = `https://www.ndbc.noaa.gov/view_text_file.php?filename=ncdv2h${year}.txt.gz&dir=data/historical/stdmet/`;
     https
       .get(url, (res) => {
-        // Check for HTTP success
         if (res.statusCode !== 200) {
           console.warn(`Year ${year}: status code ${res.statusCode}, skipping`);
           res.resume();
-          return resolve(); // Not throwing an error; just skip
+          return resolve();
         }
 
         const chunks = [];
@@ -90,16 +88,15 @@ function fetchAndProcessYear(year, seasonalData) {
         res.on("end", () => {
           const body = Buffer.concat(chunks);
 
-          // GZIP signature check (0x1f, 0x8b)
+          // Check GZIP signature (0x1f, 0x8b).
           if (body.length > 2 && body[0] === 0x1f && body[1] === 0x8b) {
-            // It's gzipped
             zlib.gunzip(body, (err, decompressed) => {
               if (err) return reject(err);
               parseFileAsText(decompressed.toString(), year, seasonalData);
               resolve();
             });
           } else {
-            // Probably plain text (or an error page).
+            // Plain text or error page, parse as-is
             parseFileAsText(body.toString(), year, seasonalData);
             resolve();
           }
@@ -112,67 +109,83 @@ function fetchAndProcessYear(year, seasonalData) {
 }
 
 async function main() {
-  // Data structure: { [year]: { Winter: {...}, Spring: {...}, Summer: {...}, Fall: {...} } }
+  // Data structure:
+  // {
+  //   [year]: {
+  //     Winter: { WSPD_max, GST_max },
+  //     Spring: { ... },
+  //     Summer: { ... },
+  //     Fall:   { ... }
+  //   }
+  // }
   const seasonalData = {};
 
-  // Fetch each year from 2015–2024
+  // Fetch each year 2015–2024
   for (let year = 2015; year <= 2024; year++) {
     console.log(`Fetching data for year: ${year}`);
     await fetchAndProcessYear(year, seasonalData);
   }
 
-  // Compute and display per-year seasonal averages, plus multi-year seasonal averages.
-  const multiYearTotals = {
-    Winter: initSeasonRecord(),
-    Spring: initSeasonRecord(),
-    Summer: initSeasonRecord(),
-    Fall: initSeasonRecord(),
+  // For our multi-year results, we want the “averaged maximum.”
+  // That means we’ll collect the “maximum per year (per season)” and then average those maxima over all years.
+  const multiYearAggregates = {
+    Winter: { WSPD_maxSum: 0, WSPD_count: 0, GST_maxSum: 0, GST_count: 0 },
+    Spring: { WSPD_maxSum: 0, WSPD_count: 0, GST_maxSum: 0, GST_count: 0 },
+    Summer: { WSPD_maxSum: 0, WSPD_count: 0, GST_maxSum: 0, GST_count: 0 },
+    Fall: { WSPD_maxSum: 0, WSPD_count: 0, GST_maxSum: 0, GST_count: 0 },
   };
 
-  console.log("\nPer-year seasonal averages (WSPD, GST):");
-  Object.keys(seasonalData)
-    .sort()
-    .forEach((y) => {
-      const year = parseInt(y, 10);
-      const record = seasonalData[year];
-      const rowOutput = [`Year ${year}:`];
+  // Print per-year maximum results
+  console.log("\nPer-year seasonal maximum (WSPD, GST):");
+  const sortedYears = Object.keys(seasonalData)
+    .map(Number)
+    .sort((a, b) => a - b);
 
-      for (const season of ["Winter", "Spring", "Summer", "Fall"]) {
-        const { WSPD_sum, WSPD_count, GST_sum, GST_count } = record[season];
-        let wspdAvg = null;
-        let gstAvg = null;
+  sortedYears.forEach((year) => {
+    const record = seasonalData[year];
+    const rowOutput = [`Year ${year}:`];
 
-        if (WSPD_count > 0) {
-          wspdAvg = WSPD_sum / WSPD_count;
-        }
-        if (GST_count > 0) {
-          gstAvg = GST_sum / GST_count;
-        }
+    for (const season of ["Winter", "Spring", "Summer", "Fall"]) {
+      const { WSPD_max, GST_max } = record[season];
+      // If no valid data, these might remain -Infinity
+      const wspdMaxVal =
+        WSPD_max === Number.NEGATIVE_INFINITY ? null : WSPD_max;
+      const gstMaxVal = GST_max === Number.NEGATIVE_INFINITY ? null : GST_max;
 
-        // Accumulate into multi-year totals if valid
-        if (wspdAvg !== null && gstAvg !== null) {
-          multiYearTotals[season].WSPD_sum += WSPD_sum;
-          multiYearTotals[season].WSPD_count += WSPD_count;
-          multiYearTotals[season].GST_sum += GST_sum;
-          multiYearTotals[season].GST_count += GST_count;
-        }
-
-        rowOutput.push(
-          `${season}: WSPD=${wspdAvg?.toFixed(2) ?? "N/A"}, GST=${
-            gstAvg?.toFixed(2) ?? "N/A"
-          }`
-        );
+      // Accumulate to multi-year so we can average
+      if (wspdMaxVal !== null) {
+        multiYearAggregates[season].WSPD_maxSum += wspdMaxVal;
+        multiYearAggregates[season].WSPD_count += 1;
       }
-      console.log(rowOutput.join(" | "));
-    });
+      if (gstMaxVal !== null) {
+        multiYearAggregates[season].GST_maxSum += gstMaxVal;
+        multiYearAggregates[season].GST_count += 1;
+      }
 
-  console.log("\nMulti-year seasonal averages (2015–2024):");
+      rowOutput.push(
+        `${season} MAX: WSPD=${wspdMaxVal?.toFixed(2) ?? "N/A"}, GST=${
+          gstMaxVal?.toFixed(2) ?? "N/A"
+        }`
+      );
+    }
+
+    console.log(rowOutput.join(" | "));
+  });
+
+  // Now compute the average of these maxima across all available years.
+  console.log("\nMulti-year average of per-year maxima (2015–2024):");
   for (const season of ["Winter", "Spring", "Summer", "Fall"]) {
-    const { WSPD_sum, WSPD_count, GST_sum, GST_count } =
-      multiYearTotals[season];
-    const wspdAvg = WSPD_count > 0 ? (WSPD_sum / WSPD_count).toFixed(2) : "N/A";
-    const gstAvg = GST_count > 0 ? (GST_sum / GST_count).toFixed(2) : "N/A";
-    console.log(`${season}: WSPD=${wspdAvg}, GST=${gstAvg}`);
+    const { WSPD_maxSum, WSPD_count, GST_maxSum, GST_count } =
+      multiYearAggregates[season];
+
+    const wspdAvgMax =
+      WSPD_count > 0 ? (WSPD_maxSum / WSPD_count).toFixed(2) : "N/A";
+    const gstAvgMax =
+      GST_count > 0 ? (GST_maxSum / GST_count).toFixed(2) : "N/A";
+
+    console.log(
+      `${season}: WSPD avg of maxima = ${wspdAvgMax}, GST avg of maxima = ${gstAvgMax}`
+    );
   }
 }
 
