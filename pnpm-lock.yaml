@@ -1,0 +1,31 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      https:
+        specifier: ^1.0.0
+        version: 1.0.0
+      zlib:
+        specifier: ^1.0.5
+        version: 1.0.5
+
+packages:
+
+  https@1.0.0:
+    resolution: {integrity: sha512-4EC57ddXrkaF0x83Oj8sM6SLQHAWXw90Skqu2M4AEWENZ3F02dFJE/GARA8igO79tcgYqGrD7ae4f5L3um2lgg==}
+
+  zlib@1.0.5:
+    resolution: {integrity: sha512-40fpE2II+Cd3k8HWTWONfeKE2jL+P42iWJ1zzps5W51qcTsOUKM5Q5m2PFb0CLxlmFAaUuUdJGc3OfZy947v0w==}
+    engines: {node: '>=0.2.0'}
+
+snapshots:
+
+  https@1.0.0: {}
+
+  zlib@1.0.5: {}
