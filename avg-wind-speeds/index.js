@@ -1,106 +1,103 @@
+/**
+ * This script:
+ * 1) Loops over NOAA historical data files for a given station (years 2015–2024).
+ * 2) Filters the wind records by direction:
+ *     - Only keep rows where the wind direction is within ±(directionTolerance) degrees
+ *       of a specified fetchDirection (e.g., 120 ± 30 => keep 90–150°).
+ * 3) From the filtered data, we collect all valid gust speeds.
+ * 4) We then take only the top X% of gust speeds (where X = percentileValue; e.g., 10 => top 10%).
+ * 5) Finally, we compute the average gust speed of that upper subset, and also print the subset’s size.
+ *
+ * Usage example:
+ *   node avg-wind-speeds/ 120 30 10
+ *   => direction=120°, tolerance=30°, top 10% of gust speeds in that range
+ *
+ * Adjust or wrap the code as needed for your environment or further analysis.
+ */
+
 const https = require("https");
 const zlib = require("zlib");
 
-// Determine meteorological season from month (1–12).
-function getSeason(month) {
-  if ([12, 1, 2].includes(month)) return "Winter";
-  if ([3, 4, 5].includes(month)) return "Spring";
-  if ([6, 7, 8].includes(month)) return "Summer";
-  if ([9, 10, 11].includes(month)) return "Fall";
-  return "Unknown";
+// For convenience, we’ll read command-line arguments:
+//   1) fetchDirection   (number, e.g. 120)
+//   2) directionRange   (number, e.g. 30)
+//   3) percentileValue  (number, e.g. 10 for upper 10%)
+const fetchDirection = parseFloat(process.argv[2]);
+const directionRange = parseFloat(process.argv[3]) || 30;
+const percentileValue = parseFloat(process.argv[4]) || 1;
+
+/**
+ * If the user-provided direction ± tolerance crosses the 0°/360° boundary,
+ * you might want to do a more robust wrap-around check.
+ * For simplicity, we’ll assume directionRange is small enough
+ * or fetchDirection is away from 0/360. If needed, you can handle that
+ * by normalizing angles mod 360.
+ */
+
+// Master array of all gust speeds that pass the direction filter across all years
+const validGusts = [];
+
+/**
+ * Check if a direction is within ±directionRange of fetchDirection, ignoring wrap-around complexities.
+ * If needed, add logic for crossing 0/360 boundaries.
+ */
+function isDirectionInRange(wdir, target, tolerance) {
+  return wdir >= target - tolerance && wdir <= target + tolerance;
 }
 
 /**
- * For each season in a given year, we store:
- *   - gstMax: the highest gust observed that season
- *   - dirSum: sum of all wind directions over that season
- *   - dirCount: number of direction readings for that season
- * This way, we can compute:
- *   - The maximum gust
- *   - The average direction (over ALL readings, not just at max gust)
+ * Process the decompressed file text for a particular year.
+ * We parse each row and keep gust speeds that:
+ *   - Are within the direction filter
+ *   - Are valid (0 <= gust <= 90)
+ *   - direction also valid (0 <= wdir <= 360)
+ * Then push them into the global validGusts array.
  */
-function initSeasonRecord() {
-  return {
-    gstMax: Number.NEGATIVE_INFINITY,
-    dirSum: 0,
-    dirCount: 0,
-  };
-}
-
-/**
- * Parse the file text (once fully read/decompressed) for a given year,
- * filling out the seasonalData structure with maximum gust and
- * the sum/count of directions in that season.
- */
-function parseFileAsText(fileText, year, seasonalData) {
-  // Ensure the year is initialized in the main data structure.
-  if (!seasonalData[year]) {
-    seasonalData[year] = {
-      Winter: initSeasonRecord(),
-      Spring: initSeasonRecord(),
-      Summer: initSeasonRecord(),
-      Fall: initSeasonRecord(),
-    };
-  }
-
+function parseFileAsText(fileText) {
   const lines = fileText.split("\n");
   for (const line of lines) {
-    // Skip headers or empty lines
-    if (!line || line.startsWith("#")) continue;
+    if (!line || line.startsWith("#")) {
+      continue; // skip header or empty
+    }
 
-    // Typical columns in NOAA data:
-    // 0: YY (year)
-    // 1: MM (month)
-    // 2: DD (day)
-    // 3: hh (hour)
-    // 4: mm (minute)
-    // 5: WDIR (wind direction, deg)
-    // 6: WSPD (wind speed, m/s)
-    // 7: GST  (gust, m/s)
+    // NOAA columns:
+    //  0: YY
+    //  1: MM
+    //  2: DD
+    //  3: hh
+    //  4: mm
+    //  5: WDIR (deg)
+    //  6: WSPD (m/s)
+    //  7: GST  (m/s)
     // ...
     const columns = line.trim().split(/\s+/);
     if (columns.length < 8) continue;
 
-    const month = parseInt(columns[1], 10);
-    const wdir = parseFloat(columns[5]); // wind direction
-    const gst = parseFloat(columns[7]); // gust
+    const wdir = parseFloat(columns[5]);
+    const gst = parseFloat(columns[7]);
 
-    // Basic filtering for missing or suspicious data.
-    // NOAA often uses 99, 999, 9999 for missing data.
-    // We'll discard anything obviously invalid.
-    if (
-      isNaN(gst) ||
-      gst < 0 ||
-      gst > 90 ||
-      isNaN(wdir) ||
-      wdir < 0 ||
-      wdir > 360
-    ) {
+    // Basic validation
+    if (isNaN(wdir) || wdir < 0 || wdir > 360) {
+      continue;
+    }
+    if (isNaN(gst) || gst < 0 || gst > 90) {
       continue;
     }
 
-    const season = getSeason(month);
-    const record = seasonalData[year][season];
-
-    // Track maximum gust
-    if (gst > record.gstMax) {
-      record.gstMax = gst;
+    // Check if direction is in ±directionRange of fetchDirection
+    if (isDirectionInRange(wdir, fetchDirection, directionRange)) {
+      validGusts.push(gst);
     }
-
-    // Accumulate direction sum/count for an average at the end
-    record.dirSum += wdir;
-    record.dirCount += 1;
   }
 }
 
 /**
- * Fetch and parse data for a single year, storing results in seasonalData.
- * If the server doesn't return a 200 or if the content is not valid GZIP,
- * we'll either skip or parse as plain text as needed.
+ * Downloads and processes a single year's data, adding to validGusts.
  */
-function fetchAndProcessYear(year, seasonalData) {
+function fetchAndProcessYear(year) {
   return new Promise((resolve, reject) => {
     const url = `https://www.ndbc.noaa.gov/view_text_file.php?filename=ncdv2h${year}.txt.gz&dir=data/historical/stdmet/`;
+
     https
       .get(url, (res) => {
         if (res.statusCode !== 200) {
@@ -114,16 +111,16 @@ function fetchAndProcessYear(year, seasonalData) {
         res.on("end", () => {
           const body = Buffer.concat(chunks);
 
-          // Check for GZIP signature (0x1f, 0x8b).
+          // Check GZIP signature
           if (body.length > 2 && body[0] === 0x1f && body[1] === 0x8b) {
             zlib.gunzip(body, (err, decompressed) => {
               if (err) return reject(err);
-              parseFileAsText(decompressed.toString(), year, seasonalData);
+              parseFileAsText(decompressed.toString());
               resolve();
             });
           } else {
-            // Plain text or error page, parse as-is.
-            parseFileAsText(body.toString(), year, seasonalData);
+            // Possibly plain text or error HTML
+            parseFileAsText(body.toString());
             resolve();
           }
         });
@@ -135,100 +132,53 @@ function fetchAndProcessYear(year, seasonalData) {
 }
 
 async function main() {
-  /**
-   * seasonalData structure for each year, e.g.:
-   * {
-   *   2015: {
-   *     Winter: { gstMax, dirSum, dirCount },
-   *     Spring: { gstMax, dirSum, dirCount },
-   *     Summer: { gstMax, dirSum, dirCount },
-   *     Fall:   { gstMax, dirSum, dirCount }
-   *   },
-   *   2016: { ... },
-   *   ...
-   * }
-   */
-  const seasonalData = {};
+  console.log(
+    `\n>>> Fetch direction = ${fetchDirection}° ± ${directionRange}°`
+  );
+  console.log(`>>> Upper percentile selected = top ${percentileValue}%`);
+  console.log("\nStarting data download and parsing...\n");
 
-  // Download/parse each year from 2015–2024
+  // Fetch each year from 2015–2024
   for (let year = 2015; year <= 2024; year++) {
-    console.log(`Fetching data for year: ${year}`);
-    await fetchAndProcessYear(year, seasonalData);
+    console.log(`Fetching data for year ${year}...`);
+    await fetchAndProcessYear(year);
   }
-
-  // For multi-year results, we’ll:
-  //   - Gather each year's max GST per season to compute an "average of maxima" across years
-  //   - Also gather direction sums across all data to find the overall average direction
-  //     for the multi-year period (i.e., we sum up all dirSum, dirCount from each year).
-  const multiYearAggregates = {
-    Winter: { gstMaxSum: 0, gstMaxCount: 0, dirSum: 0, dirCount: 0 },
-    Spring: { gstMaxSum: 0, gstMaxCount: 0, dirSum: 0, dirCount: 0 },
-    Summer: { gstMaxSum: 0, gstMaxCount: 0, dirSum: 0, dirCount: 0 },
-    Fall: { gstMaxSum: 0, gstMaxCount: 0, dirSum: 0, dirCount: 0 },
-  };
 
   console.log(
-    "\nPer-year seasonal results (max GST + average direction across the season):"
+    `\nFiltering complete. Total data points matching direction criteria: ${validGusts.length}`
   );
 
-  const sortedYears = Object.keys(seasonalData)
-    .map(Number)
-    .sort((a, b) => a - b);
+  if (validGusts.length === 0) {
+    console.log("No valid gust data found in that direction range. Exiting.");
+    return;
+  }
 
-  sortedYears.forEach((year) => {
-    const recordBySeason = seasonalData[year];
-    const rowOutput = [`Year ${year}:`];
+  // Sort descending
+  validGusts.sort((a, b) => b - a);
 
-    for (const season of ["Winter", "Spring", "Summer", "Fall"]) {
-      const { gstMax, dirSum, dirCount } = recordBySeason[season];
-      const gstVal = gstMax === Number.NEGATIVE_INFINITY ? null : gstMax;
-      // Average direction for this season in this year
-      let dirAvgVal = null;
-      if (dirCount > 0) {
-        dirAvgVal = dirSum / dirCount;
-      }
+  // e.g., if percentileValue = 10, we want the top 10% => 0.10 fraction
+  const fraction = percentileValue / 100;
+  const cutoffIndex = Math.floor(validGusts.length * fraction);
 
-      // Accumulate max GST into multi-year aggregator
-      if (gstVal !== null) {
-        multiYearAggregates[season].gstMaxSum += gstVal;
-        multiYearAggregates[season].gstMaxCount += 1;
-      }
-
-      // Accumulate direction sums to get multi-year overall average direction
-      if (dirAvgVal !== null) {
-        // Instead of averaging the averages, we want the sum of raw directions.
-        // But we only stored the sum for one year. We can store that directly:
-        // We'll add the entire year's direction sum & count to the aggregator.
-        multiYearAggregates[season].dirSum += dirSum;
-        multiYearAggregates[season].dirCount += dirCount;
-      }
-
-      const gstStr = gstVal?.toFixed(2) ?? "N/A";
-      const dirStr = dirAvgVal?.toFixed(1) ?? "N/A";
-      rowOutput.push(`${season} MAX GST=${gstStr}, DIR(avg)=${dirStr}`);
-    }
-
-    console.log(rowOutput.join(" | "));
-  });
-
-  // Now compute the multi-year average of per-year max GST, plus the overall average direction
-  // for each season (i.e. from all data points across all years).
-  console.log("\nMulti-year results:");
-  for (const season of ["Winter", "Spring", "Summer", "Fall"]) {
-    const { gstMaxSum, gstMaxCount, dirSum, dirCount } =
-      multiYearAggregates[season];
-
-    // Average of the max gusts across the years
-    const gstAvgMax =
-      gstMaxCount > 0 ? (gstMaxSum / gstMaxCount).toFixed(2) : "N/A";
-
-    // Average direction from all direction readings over all years
-    const dirAvg = dirCount > 0 ? (dirSum / dirCount).toFixed(1) : "N/A";
-
+  // If top 10%, that means we keep the first cutoffIndex elements
+  // in a descending list => that's the "upper 10%"
+  if (cutoffIndex < 1) {
     console.log(
-      `${season}: GST avg of maxima = ${gstAvgMax}, DIR(avg) = ${dirAvg}`
+      `The dataset is too small for a top ${percentileValue}% subset. We'll just keep all data.`
     );
   }
+
+  const subset =
+    cutoffIndex >= 1 ? validGusts.slice(0, cutoffIndex) : validGusts;
+
+  // Compute average of that subset
+  const sum = subset.reduce((acc, val) => acc + val, 0);
+  const avg = sum / subset.length;
+
+  console.log(
+    `\nTop ${subset.length} records ( = top ${percentileValue}% ) out of ${validGusts.length} total.`
+  );
+  console.log(`Average gust in that top subset: ${avg.toFixed(2)} m/s\n`);
 }
 
 main().catch((err) => {
