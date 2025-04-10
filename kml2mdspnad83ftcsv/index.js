@@ -24,6 +24,8 @@ function convertKmlToCsv(inputKml, outputCsv) {
     const placemarks = result.kml.Document[0].Folder[0].Placemark || [];
     const csvLines = ["Point,Northing,Easting,Elevation,Description"];
 
+    console.log(`\nConverting ${placemarks.length} placemarks to CSV...`);
+
     placemarks.forEach((pm) => {
       pointNumber++;
       const name = pm.name?.[0] || "Unknown";
@@ -43,6 +45,7 @@ function convertKmlToCsv(inputKml, outputCsv) {
     });
 
     fs.writeFileSync(outputCsv, csvLines.join("\n"));
+    console.log(`\nCSV file created: ${outputCsv}`);
   });
 }
 
