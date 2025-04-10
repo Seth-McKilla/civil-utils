@@ -4,13 +4,16 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "props": "node adjacent-properties",
+    "wind": "node avg-wind-speeds",
+    "kml2csv": "node kml2mdspnad83ftcsv"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "https": "^1.0.0",
+    "puppeteer": "^24.6.1",
     "zlib": "^1.0.5"
   }
 }
