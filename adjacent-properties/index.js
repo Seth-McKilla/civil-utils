@@ -1,70 +1,58 @@
-/**
- * scrape.js
- *
- * A Puppeteer script to scrape Owner Name and Mailing Address
- * from Maryland SDAT property pages.
- */
-
-const puppeteer = require("puppeteer");
 const fs = require("fs");
 
-/**
- * 1) Put all your property-detail URLs here.
- *    Example only includes one URL, but you can add more in this array.
- */
-const propertyUrls = [
-  "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028647",
-];
+// Use dynamic import workaround for node-fetch v3 in CommonJS
+const fetch = (...args) =>
+  import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
-/**
- * 2) A helper to safely query text from a selector (or return empty string).
- */
-async function getText(page, selector) {
-  const el = await page.$(selector);
-  if (!el) return "";
-  return page.evaluate((element) => element.innerText.trim(), el);
+async function extractFromUrl(url) {
+  const res = await fetch(url);
+  const html = await res.text();
+
+  // Extract owner names from spans with IDs ending in lblOwnerName_0 or lblOwnerName2_0
+  const ownerNames = [];
+  const ownerRegex = /id="[^"]*lblOwnerName(?:2)?_0"[^>]*>([^<]+)<\/span>/g;
+  let match;
+  while ((match = ownerRegex.exec(html)) !== null) {
+    ownerNames.push(match[1].trim());
+  }
+  const owner = ownerNames.join(", ") || "Not found";
+
+  // Extract mailing address from the span with ID ending in lblMailingAddress_0
+  let mailingAddress = "Not found";
+  const addrMatch = html.match(
+    /id="[^"]*lblMailingAddress_0"[^>]*>([\s\S]*?)<\/span>/
+  );
+  if (addrMatch) {
+    mailingAddress = addrMatch[1]
+      .replace(/<br\s*\/?>/gi, ", ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  return { owner, mailingAddress };
 }
 
 (async () => {
-  // 3) Launch Puppeteer
-  const browser = await puppeteer.launch({
-    headless: true, // or set to false if you want to see the browser
-  });
+  // Add as many SDAT page URLs as needed in this array.
+  const urls = [
+    "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028647",
+    // 'https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=xx&SearchType=ACCT&District=xx&AccountNumber=xxxxxx',
+  ];
 
-  // 4) Open a new page
-  const page = await browser.newPage();
+  let results = "";
 
-  // 5) Prepare a write stream (append mode) for results.txt
-  const fileStream = fs.createWriteStream("results.txt", { flags: "a" });
-
-  for (const url of propertyUrls) {
-    console.log(`Scraping: ${url}`);
-    await page.goto(url, { waitUntil: "networkidle2" });
-
-    // 6) Extract the relevant text using known selectors
-    //    The example site often has a table or div with ID-based selectors,
-    //    e.g. #ctl00_ContentPlaceHolderMain_dvBasicInformation for general info
-    //    and #ctl00_ContentPlaceHolderMain_dvMailingAddress for the address.
-    //    The exact layout may differ by county, but this is a good starting guess.
-
-    const ownerNameSel =
-      "#ctl00_ContentPlaceHolderMain_dvBasicInformation tr:nth-child(2) td:nth-child(2)";
-    const mailingAddrSel = "#ctl00_ContentPlaceHolderMain_dvMailingAddress";
-
-    const ownerName = await getText(page, ownerNameSel);
-    const mailingAddr = await getText(page, mailingAddrSel);
-
-    // 7) Format how you want the text to appear
-    const output = `URL: ${url}\nOwner Name: ${ownerName}\nMailing Address:\n${mailingAddr}\n\n----\n\n`;
-
-    // 8) Write to results.txt
-    fileStream.write(output);
-
-    // 9) Show feedback in console
-    console.log(`Scraped:\n${output}`);
+  for (const url of urls) {
+    console.log(`Processing: ${url}`);
+    try {
+      const { owner, mailingAddress } = await extractFromUrl(url);
+      const output = `URL: ${url}\nOwner: ${owner}\nMailing Address: ${mailingAddress}\n---\n\n`;
+      results += output;
+      console.log(output);
+    } catch (error) {
+      console.error(`Error processing ${url}:`, error.message);
+    }
   }
 
-  fileStream.end();
-  await browser.close();
-  console.log("Done! Check results.txt for the output.");
+  fs.writeFileSync("results.txt", results);
+  console.log("Results saved to results.txt");
 })();
