@@ -28,15 +28,14 @@ async function extractFromUrl(url) {
       .replace(/\s+/g, " ")
       .trim();
   }
-
   return { owner, mailingAddress };
 }
 
 (async () => {
-  // Add as many SDAT page URLs as needed in this array.
+  // List of SDAT page URLs.
   const urls = [
     "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028647",
-    // 'https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=xx&SearchType=ACCT&District=xx&AccountNumber=xxxxxx',
+    // Add more URLs as needed.
   ];
 
   let results = "";
@@ -53,6 +52,13 @@ async function extractFromUrl(url) {
     }
   }
 
-  fs.writeFileSync("results.txt", results);
-  console.log("Results saved to results.txt");
+  // Ensure the 'output' folder exists in the same directory as this script.
+  const outputDir = `${__dirname}/output`;
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  // Write results to output/results.txt
+  fs.writeFileSync(`${outputDir}/results.txt`, results);
+  console.log(`Results saved to ${outputDir}/results.txt`);
 })();
