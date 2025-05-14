@@ -6,7 +6,8 @@
   "scripts": {
     "props": "node adjacent-properties",
     "wind": "node avg-wind-speeds",
-    "kml2csv": "node kml2mdspnad83ftcsv"
+    "kml2csv": "node kml2mdspnad83ftcsv",
+    "txtupdate": "node txt-update"
   },
   "keywords": [],
   "author": "",
