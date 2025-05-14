@@ -21,4 +21,5 @@ const renumbered = filtered.map((line, i) => {
   return cols.join(",");
 });
 
-fs.writeFileSync(filePath, renumbered.join("\n"));
+const outFilePath = path.join(__dirname, "files", "output.txt");
+fs.writeFileSync(outFilePath, renumbered.join("\n"));
