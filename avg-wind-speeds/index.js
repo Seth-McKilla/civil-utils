@@ -19,12 +19,13 @@ const https = require("https");
 const zlib = require("zlib");
 
 // For convenience, we’ll read command-line arguments:
-//   1) stationId       (e.g., "ncdv2h" for NDBC station)
+//   1) stationId       (e.g., "ncdv2" for NDBC station)
 //   2) startYear       (e.g., 2015)
 //   3) endYear         (e.g., 2024)
 //   4) fetchDirection   (number, e.g. 120)
 //   5) directionRange   (number, e.g. 15)
 //   6) percentileValue  (number, e.g. 1 for upper 1%)
+
 const stationId = process.argv[2];
 const startYear = parseInt(process.argv[3]);
 const endYear = parseInt(process.argv[4]);
@@ -102,7 +103,7 @@ function parseFileAsText(fileText) {
  */
 function fetchAndProcessYear(year) {
   return new Promise((resolve, reject) => {
-    const url = `https://www.ndbc.noaa.gov/view_text_file.php?filename=ncdv2h${year}.txt.gz&dir=data/historical/stdmet/`;
+    const url = `https://www.ndbc.noaa.gov/view_text_file.php?filename=${stationId}h${year}.txt.gz&dir=data/historical/stdmet/`;
 
     https
       .get(url, (res) => {
@@ -144,8 +145,8 @@ async function main() {
   console.log(`>>> Upper percentile selected = top ${percentileValue}%`);
   console.log("\nStarting data download and parsing...\n");
 
-  // Fetch each year from 2015–2024
-  for (let year = 2015; year <= 2024; year++) {
+  // Fetch each year based on provided range
+  for (let year = startYear; year <= endYear; year++) {
     console.log(`Fetching data for year ${year}...`);
     await fetchAndProcessYear(year);
   }
