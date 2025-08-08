@@ -9,8 +9,8 @@
  * 5) Finally, we compute the average gust speed of that upper subset, and also print the subset’s size.
  *
  * Usage example:
- *   node avg-wind-speeds/ 120 30 10
- *   => direction=120°, tolerance=30°, top 10% of gust speeds in that range
+ *   node avg-wind-speeds/ ncdv2 2015 2024 120 15 1
+ *   => station=ncdv2, start year=2015, end year=2024, direction=120°, tolerance=15°, top 1% of gust speeds in that range
  *
  * Adjust or wrap the code as needed for your environment or further analysis.
  */
