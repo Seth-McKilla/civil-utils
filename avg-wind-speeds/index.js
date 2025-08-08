@@ -19,12 +19,18 @@ const https = require("https");
 const zlib = require("zlib");
 
 // For convenience, we’ll read command-line arguments:
-//   1) fetchDirection   (number, e.g. 120)
-//   2) directionRange   (number, e.g. 15)
-//   3) percentileValue  (number, e.g. 1 for upper 1%)
-const fetchDirection = parseFloat(process.argv[2]);
-const directionRange = parseFloat(process.argv[3]) || 15;
-const percentileValue = parseFloat(process.argv[4]) || 1;
+//   1) stationId       (e.g., "ncdv2h" for NDBC station)
+//   2) startYear       (e.g., 2015)
+//   3) endYear         (e.g., 2024)
+//   4) fetchDirection   (number, e.g. 120)
+//   5) directionRange   (number, e.g. 15)
+//   6) percentileValue  (number, e.g. 1 for upper 1%)
+const stationId = process.argv[2];
+const startYear = parseInt(process.argv[3]);
+const endYear = parseInt(process.argv[4]);
+const fetchDirection = parseFloat(process.argv[5]);
+const directionRange = parseFloat(process.argv[6]) || 15;
+const percentileValue = parseFloat(process.argv[7]) || 1;
 
 /**
  * If the user-provided direction ± tolerance crosses the 0°/360° boundary,
