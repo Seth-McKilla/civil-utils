@@ -14,6 +14,12 @@
  *
  *   node avg-wind-speeds/ ncdv2 2015 2024 all 15 1
  *   => same station/years, but computes results for every 5° direction (0°, 5°, 10°, ..., 355°)
+ *
+ *   node avg-wind-speeds/ ncdv2 2015 2024 120 15 max
+ *   => same as first example but returns the single highest recorded gust speed instead of a percentile average
+ *
+ *   node avg-wind-speeds/ ncdv2 2015 2024 all 15 max
+ *   => all 5° directions, each returning its single highest recorded gust speed
  */
 
 const https = require("https");
@@ -26,7 +32,9 @@ const startYear = parseInt(process.argv[3]);
 const endYear = parseInt(process.argv[4]);
 const fetchDirectionArg = process.argv[5];
 const directionRange = parseFloat(process.argv[6]) || 15;
-const percentileValue = parseFloat(process.argv[7]) || 1;
+const percentileArg = process.argv[7] || "1";
+const isMaxMode = percentileArg === "max";
+const percentileValue = isMaxMode ? null : parseFloat(percentileArg) || 1;
 
 const isAllDirections = fetchDirectionArg === "all";
 const fetchDirection = isAllDirections ? null : parseFloat(fetchDirectionArg);
@@ -120,6 +128,10 @@ function computePercentileAvg(gusts) {
 
   gusts.sort((a, b) => b - a);
 
+  if (isMaxMode) {
+    return { total: gusts.length, subsetSize: 1, avg: gusts[0] };
+  }
+
   const fraction = percentileValue / 100;
   const cutoffIndex = Math.floor(gusts.length * fraction);
   const subset = cutoffIndex >= 1 ? gusts.slice(0, cutoffIndex) : gusts;
@@ -134,8 +146,11 @@ function writeCsv(rows, filename) {
   const filePath = path.join(outputDir, filename);
   const lines = [
     "direction_deg,total_records,top_n_records,avg_gust_ms",
-    ...rows.map((r) =>
-      `${r.dir},${r.total},${r.subsetSize},${r.avg !== null ? r.avg.toFixed(2) : ""}`
+    ...rows.map(
+      (r) =>
+        `${r.dir},${r.total},${r.subsetSize},${
+          r.avg !== null ? r.avg.toFixed(2) : ""
+        }`
     ),
   ];
   fs.writeFileSync(filePath, lines.join("\n") + "\n");
@@ -160,12 +175,24 @@ function computeSingleDirection() {
     );
   }
 
-  console.log(
-    `\nTop ${result.subsetSize} records ( = top ${percentileValue}% ) out of ${result.total} total.`
-  );
-  console.log(`Average gust in that top subset: ${result.avg.toFixed(2)} m/s\n`);
+  if (isMaxMode) {
+    console.log(
+      `\nMax gust speed: ${result.avg.toFixed(2)} m/s (from ${
+        result.total
+      } total records)\n`
+    );
+  } else {
+    console.log(
+      `\nTop ${result.subsetSize} records ( = top ${percentileValue}% ) out of ${result.total} total.`
+    );
+    console.log(
+      `Average gust in that top subset: ${result.avg.toFixed(2)} m/s\n`
+    );
+  }
 
-  const filename = `${stationId}_${startYear}-${endYear}_dir${fetchDirection}_range${directionRange}_top${percentileValue}pct.csv`;
+  const filename = `${stationId}_${startYear}-${endYear}_dir${fetchDirection}_range${directionRange}_${
+    isMaxMode ? "max" : `top${percentileValue}pct`
+  }.csv`;
   writeCsv([{ dir: fetchDirection, ...result }], filename);
 }
 
@@ -175,7 +202,7 @@ function computeAllDirections() {
   const header = [
     "Dir (°)".padEnd(10),
     "Total".padEnd(8),
-    `Top ${percentileValue}%`.padEnd(10),
+    (isMaxMode ? "Max" : `Top ${percentileValue}%`).padEnd(10),
     "Avg Gust (m/s)",
   ].join(" ");
   console.log(header);
@@ -198,14 +225,18 @@ function computeAllDirections() {
 
     const result = computePercentileAvg(gusts);
     console.log(
-      `${String(dir).padEnd(10)} ${String(result.total).padEnd(8)} ${String(result.subsetSize).padEnd(10)} ${result.avg.toFixed(2)}`
+      `${String(dir).padEnd(10)} ${String(result.total).padEnd(8)} ${String(
+        result.subsetSize
+      ).padEnd(10)} ${result.avg.toFixed(2)}`
     );
     rows.push({ dir, ...result });
   }
 
   console.log();
 
-  const filename = `${stationId}_${startYear}-${endYear}_all-dirs_range${directionRange}_top${percentileValue}pct.csv`;
+  const filename = `${stationId}_${startYear}-${endYear}_all-dirs_range${directionRange}_${
+    isMaxMode ? "max" : `top${percentileValue}pct`
+  }.csv`;
   writeCsv(rows, filename);
 }
 
@@ -219,7 +250,9 @@ async function main() {
       `\n>>> Fetch direction = ${fetchDirection}° ± ${directionRange}°`
     );
   }
-  console.log(`>>> Upper percentile selected = top ${percentileValue}%`);
+  console.log(
+    `>>> Mode = ${isMaxMode ? "max gust" : `top ${percentileValue}%`}`
+  );
   console.log("\nStarting data download and parsing...\n");
 
   for (let year = startYear; year <= endYear; year++) {
