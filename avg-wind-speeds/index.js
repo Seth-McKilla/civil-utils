@@ -18,6 +18,8 @@
 
 const https = require("https");
 const zlib = require("zlib");
+const fs = require("fs");
+const path = require("path");
 
 const stationId = process.argv[2];
 const startYear = parseInt(process.argv[3]);
@@ -126,6 +128,20 @@ function computePercentileAvg(gusts) {
   return { total: gusts.length, subsetSize: subset.length, avg };
 }
 
+function writeCsv(rows, filename) {
+  const outputDir = path.join(__dirname, "output");
+  fs.mkdirSync(outputDir, { recursive: true });
+  const filePath = path.join(outputDir, filename);
+  const lines = [
+    "direction_deg,total_records,top_n_records,avg_gust_ms",
+    ...rows.map((r) =>
+      `${r.dir},${r.total},${r.subsetSize},${r.avg !== null ? r.avg.toFixed(2) : ""}`
+    ),
+  ];
+  fs.writeFileSync(filePath, lines.join("\n") + "\n");
+  console.log(`CSV written to: ${filePath}`);
+}
+
 function computeSingleDirection() {
   console.log(
     `\nFiltering complete. Total data points matching direction criteria: ${validGusts.length}`
@@ -148,6 +164,9 @@ function computeSingleDirection() {
     `\nTop ${result.subsetSize} records ( = top ${percentileValue}% ) out of ${result.total} total.`
   );
   console.log(`Average gust in that top subset: ${result.avg.toFixed(2)} m/s\n`);
+
+  const filename = `${stationId}_${startYear}-${endYear}_dir${fetchDirection}_range${directionRange}_top${percentileValue}pct.csv`;
+  writeCsv([{ dir: fetchDirection, ...result }], filename);
 }
 
 function computeAllDirections() {
@@ -162,6 +181,8 @@ function computeAllDirections() {
   console.log(header);
   console.log("-".repeat(header.length));
 
+  const rows = [];
+
   for (let dir = 0; dir < 360; dir += 5) {
     const gusts = allRecords
       .filter((r) => isDirectionInRange(r.wdir, dir, directionRange))
@@ -171,6 +192,7 @@ function computeAllDirections() {
       console.log(
         `${String(dir).padEnd(10)} ${"0".padEnd(8)} ${"0".padEnd(10)} N/A`
       );
+      rows.push({ dir, total: 0, subsetSize: 0, avg: null });
       continue;
     }
 
@@ -178,9 +200,13 @@ function computeAllDirections() {
     console.log(
       `${String(dir).padEnd(10)} ${String(result.total).padEnd(8)} ${String(result.subsetSize).padEnd(10)} ${result.avg.toFixed(2)}`
     );
+    rows.push({ dir, ...result });
   }
 
   console.log();
+
+  const filename = `${stationId}_${startYear}-${endYear}_all-dirs_range${directionRange}_top${percentileValue}pct.csv`;
+  writeCsv(rows, filename);
 }
 
 async function main() {
