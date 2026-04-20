@@ -35,99 +35,55 @@ async function extractFromUrl(url) {
   const urlObjects = [
     {
       "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028582",
+        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=19&SearchType=ACCT&District=01&AccountNumber=003631",
     },
     {
       "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028574",
+        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=19&SearchType=ACCT&District=01&AccountNumber=041193",
     },
     {
       "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028566",
+        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=19&SearchType=ACCT&District=01&AccountNumber=041223",
     },
     {
       "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028558",
+        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=19&SearchType=ACCT&District=01&AccountNumber=041274",
     },
     {
       "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028531",
+        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=19&SearchType=ACCT&District=01&AccountNumber=041266",
     },
     {
       "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028523",
+        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=19&SearchType=ACCT&District=01&AccountNumber=018590",
     },
     {
       "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028515",
+        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=19&SearchType=ACCT&District=01&AccountNumber=031082",
     },
     {
       "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028329",
+        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=19&SearchType=ACCT&District=01&AccountNumber=031090",
     },
     {
       "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028337",
+        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=19&SearchType=ACCT&District=01&AccountNumber=031112",
     },
     {
       "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028361",
+        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=19&SearchType=ACCT&District=01&AccountNumber=031120",
     },
     {
       "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028388",
+        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=19&SearchType=ACCT&District=01&AccountNumber=031139",
     },
     {
       "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028396",
+        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=19&SearchType=ACCT&District=01&AccountNumber=031147",
     },
     {
       "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028418",
-    },
-    {
-      "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028426",
-    },
-    {
-      "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028434",
-    },
-    {
-      "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028442",
-    },
-    {
-      "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028450",
-    },
-    {
-      "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028469",
-    },
-    {
-      "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028477",
-    },
-    {
-      "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028620",
-    },
-    {
-      "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028612",
-    },
-    {
-      "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028604",
-    },
-    {
-      "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028590",
-    },
-    {
-      "url":
-        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=18&SearchType=ACCT&District=05&AccountNumber=028647",
+        "https://sdat.dat.maryland.gov/RealProperty/Pages/viewdetails.aspx?County=19&SearchType=ACCT&District=01&AccountNumber=031155",
     },
   ];
 

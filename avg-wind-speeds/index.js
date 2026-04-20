@@ -1,105 +1,78 @@
 /**
  * This script:
- * 1) Loops over NOAA historical data files for a given station (years 2015–2024).
+ * 1) Loops over NOAA historical data files for a given station (years startYear–endYear).
  * 2) Filters the wind records by direction:
- *     - Only keep rows where the wind direction is within ±(directionTolerance) degrees
- *       of a specified fetchDirection (e.g., 120 ± 15 => keep 105–135°).
- * 3) From the filtered data, we collect all valid gust speeds.
- * 4) We then take only the top X% of gust speeds (where X = percentileValue; e.g., 1 => top 1%).
- * 5) Finally, we compute the average gust speed of that upper subset, and also print the subset’s size.
+ *     - Single direction: only keep rows within ±directionRange° of fetchDirection.
+ *     - All directions: collect every valid record, then compute results for each 5° step (0–355°).
+ * 3) From the filtered data, collect all valid gust speeds.
+ * 4) Take only the top X% of gust speeds (where X = percentileValue; e.g., 1 => top 1%).
+ * 5) Compute the average gust speed of that upper subset and print the subset's size.
  *
- * Usage example:
+ * Usage examples:
  *   node avg-wind-speeds/ ncdv2 2015 2024 120 15 1
- *   => station=ncdv2, start year=2015, end year=2024, direction=120°, tolerance=15°, top 1% of gust speeds in that range
+ *   => station=ncdv2, start=2015, end=2024, direction=120°, tolerance=±15°, top 1% of gusts
  *
- * Adjust or wrap the code as needed for your environment or further analysis.
+ *   node avg-wind-speeds/ ncdv2 2015 2024 all 15 1
+ *   => same station/years, but computes results for every 5° direction (0°, 5°, 10°, ..., 355°)
  */
 
 const https = require("https");
 const zlib = require("zlib");
 
-// For convenience, we’ll read command-line arguments:
-//   1) stationId       (e.g., "ncdv2" for NDBC station)
-//   2) startYear       (e.g., 2015)
-//   3) endYear         (e.g., 2024)
-//   4) fetchDirection   (number, e.g. 120)
-//   5) directionRange   (number, e.g. 15)
-//   6) percentileValue  (number, e.g. 1 for upper 1%)
-
 const stationId = process.argv[2];
 const startYear = parseInt(process.argv[3]);
 const endYear = parseInt(process.argv[4]);
-const fetchDirection = parseFloat(process.argv[5]);
+const fetchDirectionArg = process.argv[5];
 const directionRange = parseFloat(process.argv[6]) || 15;
 const percentileValue = parseFloat(process.argv[7]) || 1;
 
-/**
- * If the user-provided direction ± tolerance crosses the 0°/360° boundary,
- * you might want to do a more robust wrap-around check.
- * For simplicity, we’ll assume directionRange is small enough
- * or fetchDirection is away from 0/360. If needed, you can handle that
- * by normalizing angles mod 360.
- */
+const isAllDirections = fetchDirectionArg === "all";
+const fetchDirection = isAllDirections ? null : parseFloat(fetchDirectionArg);
 
-// Master array of all gust speeds that pass the direction filter across all years
+// Single-direction mode: accumulate matching gust speeds directly
 const validGusts = [];
+// All-directions mode: accumulate every valid {wdir, gst} record, filter per direction after
+const allRecords = [];
 
 /**
- * Check if a direction is within ±directionRange of fetchDirection, ignoring wrap-around complexities.
- * If needed, add logic for crossing 0/360 boundaries.
+ * Angular distance between two directions, accounting for the 0°/360° wrap-around.
  */
 function isDirectionInRange(wdir, target, tolerance) {
-  return wdir >= target - tolerance && wdir <= target + tolerance;
+  const diff = Math.abs(((wdir - target + 180 + 360) % 360) - 180);
+  return diff <= tolerance;
 }
 
 /**
- * Process the decompressed file text for a particular year.
- * We parse each row and keep gust speeds that:
- *   - Are within the direction filter
- *   - Are valid (0 <= gust <= 90)
- *   - direction also valid (0 <= wdir <= 360)
- * Then push them into the global validGusts array.
+ * Parse decompressed NOAA file text and push matching records into the appropriate store.
+ *
+ * NOAA stdmet columns:
+ *   0: YY  1: MM  2: DD  3: hh  4: mm
+ *   5: WDIR (deg)  6: WSPD (m/s)  7: GST (m/s)  ...
  */
 function parseFileAsText(fileText) {
   const lines = fileText.split("\n");
   for (const line of lines) {
-    if (!line || line.startsWith("#")) {
-      continue; // skip header or empty
-    }
+    if (!line || line.startsWith("#")) continue;
 
-    // NOAA columns:
-    //  0: YY
-    //  1: MM
-    //  2: DD
-    //  3: hh
-    //  4: mm
-    //  5: WDIR (deg)
-    //  6: WSPD (m/s)
-    //  7: GST  (m/s)
-    // ...
     const columns = line.trim().split(/\s+/);
     if (columns.length < 8) continue;
 
     const wdir = parseFloat(columns[5]);
     const gst = parseFloat(columns[7]);
 
-    // Basic validation
-    if (isNaN(wdir) || wdir < 0 || wdir > 360) {
-      continue;
-    }
-    if (isNaN(gst) || gst < 0 || gst > 90) {
-      continue;
-    }
+    if (isNaN(wdir) || wdir < 0 || wdir > 360) continue;
+    if (isNaN(gst) || gst < 0 || gst > 90) continue;
 
-    // Check if direction is in ±directionRange of fetchDirection
-    if (isDirectionInRange(wdir, fetchDirection, directionRange)) {
+    if (isAllDirections) {
+      allRecords.push({ wdir, gst });
+    } else if (isDirectionInRange(wdir, fetchDirection, directionRange)) {
       validGusts.push(gst);
     }
   }
 }
 
 /**
- * Downloads and processes a single year's data, adding to validGusts.
+ * Download and parse a single year's data file.
  */
 function fetchAndProcessYear(year) {
   return new Promise((resolve, reject) => {
@@ -118,7 +91,6 @@ function fetchAndProcessYear(year) {
         res.on("end", () => {
           const body = Buffer.concat(chunks);
 
-          // Check GZIP signature
           if (body.length > 2 && body[0] === 0x1f && body[1] === 0x8b) {
             zlib.gunzip(body, (err, decompressed) => {
               if (err) return reject(err);
@@ -126,7 +98,6 @@ function fetchAndProcessYear(year) {
               resolve();
             });
           } else {
-            // Possibly plain text or error HTML
             parseFileAsText(body.toString());
             resolve();
           }
@@ -138,19 +109,24 @@ function fetchAndProcessYear(year) {
   });
 }
 
-async function main() {
-  console.log(
-    `\n>>> Fetch direction = ${fetchDirection}° ± ${directionRange}°`
-  );
-  console.log(`>>> Upper percentile selected = top ${percentileValue}%`);
-  console.log("\nStarting data download and parsing...\n");
+/**
+ * Compute and print percentile-average gust speed for a set of gust values.
+ * Returns the result object, or null if no data.
+ */
+function computePercentileAvg(gusts) {
+  if (gusts.length === 0) return null;
 
-  // Fetch each year based on provided range
-  for (let year = startYear; year <= endYear; year++) {
-    console.log(`Fetching data for year ${year}...`);
-    await fetchAndProcessYear(year);
-  }
+  gusts.sort((a, b) => b - a);
 
+  const fraction = percentileValue / 100;
+  const cutoffIndex = Math.floor(gusts.length * fraction);
+  const subset = cutoffIndex >= 1 ? gusts.slice(0, cutoffIndex) : gusts;
+  const avg = subset.reduce((acc, val) => acc + val, 0) / subset.length;
+
+  return { total: gusts.length, subsetSize: subset.length, avg };
+}
+
+function computeSingleDirection() {
   console.log(
     `\nFiltering complete. Total data points matching direction criteria: ${validGusts.length}`
   );
@@ -160,32 +136,76 @@ async function main() {
     return;
   }
 
-  // Sort descending
-  validGusts.sort((a, b) => b - a);
+  const result = computePercentileAvg(validGusts);
 
-  // e.g., if percentileValue = 10, we want the top 10% => 0.10 fraction
-  const fraction = percentileValue / 100;
-  const cutoffIndex = Math.floor(validGusts.length * fraction);
-
-  // If top 10%, that means we keep the first cutoffIndex elements
-  // in a descending list => that's the "upper 10%"
-  if (cutoffIndex < 1) {
+  if (result.subsetSize < 1) {
     console.log(
-      `The dataset is too small for a top ${percentileValue}% subset. We'll just keep all data.`
+      `The dataset is too small for a top ${percentileValue}% subset. Showing all data.`
     );
   }
 
-  const subset =
-    cutoffIndex >= 1 ? validGusts.slice(0, cutoffIndex) : validGusts;
-
-  // Compute average of that subset
-  const sum = subset.reduce((acc, val) => acc + val, 0);
-  const avg = sum / subset.length;
-
   console.log(
-    `\nTop ${subset.length} records ( = top ${percentileValue}% ) out of ${validGusts.length} total.`
+    `\nTop ${result.subsetSize} records ( = top ${percentileValue}% ) out of ${result.total} total.`
   );
-  console.log(`Average gust in that top subset: ${avg.toFixed(2)} m/s\n`);
+  console.log(`Average gust in that top subset: ${result.avg.toFixed(2)} m/s\n`);
+}
+
+function computeAllDirections() {
+  console.log(`\nTotal valid records collected: ${allRecords.length}\n`);
+
+  const header = [
+    "Dir (°)".padEnd(10),
+    "Total".padEnd(8),
+    `Top ${percentileValue}%`.padEnd(10),
+    "Avg Gust (m/s)",
+  ].join(" ");
+  console.log(header);
+  console.log("-".repeat(header.length));
+
+  for (let dir = 0; dir < 360; dir += 5) {
+    const gusts = allRecords
+      .filter((r) => isDirectionInRange(r.wdir, dir, directionRange))
+      .map((r) => r.gst);
+
+    if (gusts.length === 0) {
+      console.log(
+        `${String(dir).padEnd(10)} ${"0".padEnd(8)} ${"0".padEnd(10)} N/A`
+      );
+      continue;
+    }
+
+    const result = computePercentileAvg(gusts);
+    console.log(
+      `${String(dir).padEnd(10)} ${String(result.total).padEnd(8)} ${String(result.subsetSize).padEnd(10)} ${result.avg.toFixed(2)}`
+    );
+  }
+
+  console.log();
+}
+
+async function main() {
+  if (isAllDirections) {
+    console.log(
+      `\n>>> Mode: all directions (5° increments) ± ${directionRange}°`
+    );
+  } else {
+    console.log(
+      `\n>>> Fetch direction = ${fetchDirection}° ± ${directionRange}°`
+    );
+  }
+  console.log(`>>> Upper percentile selected = top ${percentileValue}%`);
+  console.log("\nStarting data download and parsing...\n");
+
+  for (let year = startYear; year <= endYear; year++) {
+    console.log(`Fetching data for year ${year}...`);
+    await fetchAndProcessYear(year);
+  }
+
+  if (isAllDirections) {
+    computeAllDirections();
+  } else {
+    computeSingleDirection();
+  }
 }
 
 main().catch((err) => {
