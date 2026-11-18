@@ -14,7 +14,7 @@ Every utility can be run with `pnpm <script>` or `node <folder>`. Generated file
 
 | Utility | Script | What it does |
 |---|---|---|
-| [avg-wind-speeds](#avg-wind-speeds) | `pnpm wind` | Design wind gust speeds by direction from NOAA NDBC historical data |
+| [avg-wind-speeds](#avg-wind-speeds) | `pnpm wind` | Design sustained wind speeds by direction from NOAA NDBC historical data |
 | [wave-heights](#wave-heights) | `pnpm waves` | Projected wave heights on restricted fetches (Smith 1991) + wave rose PDF |
 | [adjacent-properties](#adjacent-properties) | `pnpm props` | Owner names and mailing addresses from MD SDAT property pages |
 | [kml2mdspnad83ftcsv](#kml2mdspnad83ftcsv) | `pnpm kml2csv` | KML points → MD State Plane NAD83 (US ft) CSV |
@@ -24,10 +24,10 @@ Every utility can be run with `pnpm <script>` or `node <folder>`. Generated file
 
 ## avg-wind-speeds
 
-Downloads NOAA NDBC historical standard meteorological data for a station, filters gusts by direction, and averages the top X% of gusts (or takes the single maximum).
+Downloads NOAA NDBC historical standard meteorological data for a station and computes design sustained wind speeds by direction. It uses `WSPD`, the NDBC sustained average: 8 minutes on buoys, 2 minutes on C-MAN stations. Gusts (`GST`) are not used, because wave growth is driven by sustained wind over the fetch.
 
 ```bash
-pnpm wind <station> <startYear> <endYear> <direction|all> [range=15] [percentile=1|max]
+pnpm wind <station> <startYear> <endYear> <direction|all> [range=15] [mode=rp]
 ```
 
 | Argument | Description |
@@ -36,17 +36,27 @@ pnpm wind <station> <startYear> <endYear> <direction|all> [range=15] [percentile
 | `startYear` / `endYear` | Range of years to download |
 | `direction` | Wind direction in degrees, or `all` for every 5° (0–355°) |
 | `range` | ± degrees around each direction to include (default 15) |
-| `percentile` | Average the top X% of gusts (default `1`), or `max` for the single highest gust |
+| `mode` | `rp` (default): return-period winds. Otherwise a number X to average the top X% of wind speeds, or `max` for the single highest. |
+
+**Return-period mode (`rp`, recommended for design):**
+1. WSPD records are averaged into hourly winds. This gives roughly a 1-hour sustained wind, which matches the SPM/Smith growth equations and filters out minutes-long thunderstorm spikes.
+2. The annual maximum hourly wind is taken for each year and direction.
+3. A Gumbel distribution (method of moments) is fit to the annual maxima, giving **10-, 25-, 50- and 100-year** winds.
+4. Years with less than 50% of the median year's record count (partial deployments or outages) are skipped and listed in the console.
+5. With about 15 years of data, 50- and 100-year values are extrapolations; treat them as estimates.
 
 Examples:
 
 ```bash
-pnpm wind 44062 2010 2025 all 15 1     # top 1% avg gust for every 5° direction
+pnpm wind 44062 2010 2025 all 15       # 10/25/50/100-yr winds for every 5° direction (default rp mode)
+pnpm wind 44062 2010 2025 all 15 1     # top 1% avg sustained wind for every 5° direction
 pnpm wind ocim2 2008 2025 40 15 1      # single direction, 40° ± 15°
-pnpm wind 44062 2010 2025 all 15 max   # max gust for every 5° direction
+pnpm wind 44062 2010 2025 all 15 max   # max sustained wind for every 5° direction
 ```
 
-Output: `avg-wind-speeds/output/<station>_<start>-<end>_<dir<deg>|all-dirs>_range<range>_<top<X>pct|max>.csv` with columns `direction_deg, total_records, top_n_records, avg_gust_ms` (m/s).
+Output: `avg-wind-speeds/output/<station>_<start>-<end>_<dir<deg>|all-dirs>_range<range>_<rp|top<X>pct|max>.csv` (speeds in m/s).
+- `rp` columns: `direction_deg, years, mean_annual_max_ms, std_annual_max_ms, rp10_wspd_ms, rp25_wspd_ms, rp50_wspd_ms, rp100_wspd_ms`
+- Percentile and max columns: `direction_deg, total_records, top_n_records, avg_wspd_ms`
 
 Find stations at <https://www.ndbc.noaa.gov/>.
 
@@ -79,10 +89,20 @@ node wave-heights [fetchFile] [windCsv] [--units ft] [--z 10] [--rt 1.1]
 | `fetchFile` | newest in `input/` | Path to a specific fetch lengths file |
 | `windCsv` | newest in `avg-wind-speeds/output/` | Path to a specific wind CSV |
 | `--units` | `ft` | Fetch length units: `ft`, `m`, `mi`, `km`, `nmi` |
-| `--z` | `10` | Anemometer height (m). The wind is adjusted to 10 m by (10/z)^(1/7). NDBC buoys are typically ~3.8 m. |
+| `--z` | `10` | Anemometer height (m). The wind is adjusted to 10 m by (10/z)^(1/7). Use the station's anemometer height from its NDBC page (e.g. 44062 = 3 m). |
 | `--rt` | `1.1` | Air–sea stability factor R_T (1.1 = unstable/unknown, per SPM) |
+| `--rp` | `25` | Return period (yr) to use from an `rp` wind CSV: 10, 25, 50 or 100 |
+| `--depth` | none (deep water) | Average water depth along the fetch at the design water level (ft). Applies SPM 1984 shallow-water growth. |
 
-Example: `pnpm waves --z 3.8`
+Examples:
+
+```bash
+pnpm waves --z 3                 # 25-yr wind, deep water, 44062 anemometer at 3 m
+pnpm waves --z 3 --depth 12      # 25-yr wind, 12 ft average fetch depth
+pnpm waves --z 3 --rp 50         # 50-yr wind
+```
+
+Output files are tagged with the return period and depth, e.g. `waves_<wind file>25_d12ft.pdf`.
 
 ### Output
 
@@ -100,10 +120,12 @@ Written to `wave-heights/output/`:
 3. The wave direction is the angle φ within ±90° of the wind that maximizes F^0.28·cos(φ)^0.44 (Eq. 11).
 4. Wave height and period (Eq. 9): Hmo = 0.0015·(U_A cos φ)·√(F/g), and Tp = 1/fp with fp = 2.6·g^0.72·F^−0.28·(U_A cos φ)^−0.44.
 5. Results are capped at the SPM fully developed limit.
+6. With `--depth`, the Eq. 11 fetch and U_A cos φ are applied to the SPM (1984) shallow-water equations (3-39, 3-40), as Smith 1991 recommends for shallow water. The lower of the deep- and shallow-water heights is reported, labeled `depth-limited`.
 
 Limitations:
 - Duration limits are not checked.
-- Gust speeds from `avg-wind-speeds` are used as-is. They are not converted to longer averaging times, so results are conservative.
+- `rp` winds are hourly averages, so they match the method. Percentile and max winds are raw 8-min or 2-min averages, which is slightly conservative.
+- Depth-induced breaking at the site is not applied. Check H ≤ ~0.78 × the local depth at the structure.
 
 ---
 

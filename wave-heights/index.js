@@ -5,7 +5,7 @@
  * Inputs:
  *   1) Fetch lengths file (.xlsx / .xls / .csv) with columns "Layer, Length"
  *      where Layer is the direction (e.g. "_005", "_010", ... "_360") and Length is the fetch.
- *   2) Wind CSV output from avg-wind-speeds (columns: direction_deg, ..., avg_gust_ms).
+ *   2) Wind CSV output from avg-wind-speeds (columns: direction_deg, ..., avg_wspd_ms).
  *
  * Method (per Smith 1991):
  *   - Radial fetches are interpolated to 1° and averaged over 15° arcs centered on each 1°.
@@ -17,13 +17,20 @@
  *       Hmo = 0.0015 * (U_A cosφ) * sqrt(F / g)
  *       Tp  = 0.3846 * (U_A cosφ)^0.44 * F^0.28 / g^0.72        (Tp = 1/fp, fp = 2.6 g^0.72 F^-0.28 (U_A cosφ)^-0.44)
  *   - Capped at SPM fully developed: Hmo = 0.2433 U_A^2 / g, Tp = 8.134 U_A / g.
+ *   - Optional shallow water (--depth, average depth along the fetch in ft): per Smith (1991) para. 25, the
+ *     Eq. 11 fetch is applied to the SPM (1984) shallow-water growth equations (Eqs. 3-39, 3-40) with U_A cosφ:
+ *       gH/UA² = 0.283 tanh[0.530 (gd/UA²)^0.75] tanh{0.00565 (gF/UA²)^0.5 / tanh[0.530 (gd/UA²)^0.75]}
+ *       gT/UA  = 7.54  tanh[0.833 (gd/UA²)^0.375] tanh{0.0379 (gF/UA²)^0.333 / tanh[0.833 (gd/UA²)^0.375]}
+ *     The lower of the deep-water (Eq. 9) and shallow-water results is reported.
  *   - Duration limits are NOT checked (no duration input) — results assume fetch-limited or fully developed.
  *
  * Usage:
  *   pnpm waves
  *   => uses the newest fetch file in wave-heights/input/ and the newest CSV in avg-wind-speeds/output/
  *
- *   node wave-heights [fetchFile] [windCsv] [--units ft] [--z 10] [--rt 1.1]
+ *   node wave-heights [fetchFile] [windCsv] [--rp 25] [--depth <ft>] [--units ft] [--z 10] [--rt 1.1]
+ *   --rp:    return period (yr) column to use from a return-period wind CSV, default 25
+ *   --depth: average water depth along the fetch at the design water level (ft); omit for deep water
  *   --units: fetch length units (ft | m | mi | km | nmi), default ft
  *   --z:     anemometer height in metres, default 10
  *   --rt:    stability correction R_T, default 1.1
@@ -49,6 +56,9 @@ for (let i = 0; i < args.length; i++) {
 const unitsArg = flags.units || "ft";
 const zArg = flags.z || "10";
 const rtArg = flags.rt || "1.1";
+const returnPeriod = parseFloat(flags.rp || "25");
+const depthFt = flags.depth ? parseFloat(flags.depth) : null;
+const depthM = depthFt ? depthFt * 0.3048 : null;
 
 /** Newest file in dir matching extension regex. */
 function newestFile(dir, extRe) {
@@ -71,7 +81,7 @@ const windFile =
 if (!fetchFile || !windFile) {
   console.log(
     "Put fetch lengths in wave-heights/input/ and run avg-wind-speeds first, or pass paths:\n" +
-      "  node wave-heights [fetchFile] [windCsv] [--units ft] [--z 10] [--rt 1.1]"
+      "  node wave-heights [fetchFile] [windCsv] [--rp 25] [--depth <ft>] [--units ft] [--z 10] [--rt 1.1]"
   );
   process.exit(1);
 }
@@ -128,13 +138,18 @@ function buildAveragedFetch(radials) {
   return averaged;
 }
 
-/** Read avg-wind-speeds CSV -> [{dir, u (m/s)}]. */
+/** Read avg-wind-speeds CSV -> [{dir, u (m/s)}]. Return-period CSVs use the rp<T>_wspd_ms column. */
 function readWinds(file) {
   const lines = fs.readFileSync(file, "utf8").trim().split(/\r?\n/);
   const header = lines[0].split(",").map((h) => h.trim());
   const iDir = header.indexOf("direction_deg");
-  const iSpd = header.findIndex((h) => /gust|speed|_ms$/i.test(h) && h !== "direction_deg");
-  if (iDir < 0 || iSpd < 0) throw new Error(`Wind CSV needs direction_deg and avg_gust_ms columns: ${file}`);
+  const isRp = header.some((h) => /^rp\d+_wspd_ms$/.test(h));
+  const iSpd = isRp ? header.indexOf(`rp${returnPeriod}_wspd_ms`) : header.indexOf("avg_wspd_ms");
+  if (isRp && iSpd < 0) {
+    const avail = header.filter((h) => /^rp\d+/.test(h)).map((h) => h.match(/\d+/)[0]);
+    throw new Error(`No ${returnPeriod}-yr column in ${file}. Available --rp values: ${avail.join(", ")}`);
+  }
+  if (iDir < 0 || iSpd < 0) throw new Error(`Wind CSV needs direction_deg and avg_wspd_ms (or rp<T>_wspd_ms) columns: ${file}`);
   return lines
     .slice(1)
     .map((l) => l.split(","))
@@ -146,10 +161,12 @@ function readWinds(file) {
 function describeWind(file) {
   const m = path
     .basename(file)
-    .match(/^(.+?)_(\d{4})-(\d{4})_(?:all-dirs|dir[\d.]+)_range([\d.]+)_(?:top([\d.]+)pct|(max))/);
+    .match(/^(.+?)_(\d{4})-(\d{4})_(?:all-dirs|dir[\d.]+)_range([\d.]+)_(?:top([\d.]+)pct|(max)|(rp))/);
   if (!m) return "Wind statistic: see wind file";
-  const [, station, y0, y1, range, pct, isMax] = m;
-  const stat = isMax ? "maximum recorded gust" : `average of the top ${pct}% of gusts (${100 - parseFloat(pct)}th percentile and above)`;
+  const [, station, y0, y1, range, pct, isMax, isRp] = m;
+  const stat = isRp
+    ? `${returnPeriod}-year return period 1-hr sustained wind (hourly-avg WSPD, Gumbel fit of annual maxima)`
+    : isMax ? "maximum recorded sustained wind (WSPD)" : `average of the top ${pct}% of sustained wind speeds (WSPD, ${100 - parseFloat(pct)}th percentile and above)`;
   return `Wind: NDBC station ${station.toUpperCase()}, ${y0}-${y1}, ${stat}, directions binned ±${range}°`;
 }
 
@@ -175,6 +192,21 @@ function computeWave(windDir, u, fetch) {
   let T = (Math.pow(uc, 0.44) * Math.pow(best.F, 0.28)) / (2.6 * Math.pow(G, 0.72));
   let condition = "fetch-limited";
 
+  // SPM (1984) shallow-water growth with the Smith fetch and wind component
+  if (depthM) {
+    const dStar = (G * depthM) / (uc * uc);
+    const fStar = (G * best.F) / (uc * uc);
+    const tH = Math.tanh(0.53 * Math.pow(dStar, 0.75));
+    const tT = Math.tanh(0.833 * Math.pow(dStar, 0.375));
+    const hShallow = ((0.283 * tH * Math.tanh((0.00565 * Math.sqrt(fStar)) / tH)) * uc * uc) / G;
+    const tShallow = (7.54 * tT * Math.tanh((0.0379 * Math.pow(fStar, 1 / 3)) / tT) * uc) / G;
+    if (hShallow < H) {
+      H = hShallow;
+      T = Math.min(T, tShallow);
+      condition = "depth-limited";
+    }
+  }
+
   const hFull = (0.2433 * ua * ua) / G;
   const tFull = (8.134 * ua) / G;
   if (H > hFull || T > tFull) {
@@ -195,7 +227,8 @@ async function main() {
   console.log(`Wind file:  ${windFile}`);
   const windDesc = describeWind(windFile);
   console.log(windDesc);
-  console.log(`Anemometer height: ${anemometerZ} m, stability R_T: ${stabilityRT}\n`);
+  console.log(`Anemometer height: ${anemometerZ} m, stability R_T: ${stabilityRT}`);
+  console.log(depthFt ? `Average fetch depth: ${depthFt} ft (SPM shallow-water growth)\n` : "Deep water (no --depth given)\n");
 
   const header = ["Wind Dir", "U (m/s)", "UA (m/s)", "Wave Dir", "φ (°)", "Fetch (ft)", "Hmo (ft)", "Tp (s)", "Condition"];
   const widths = [9, 9, 9, 9, 6, 11, 9, 7, 16];
@@ -223,7 +256,9 @@ async function main() {
 
   const outDir = path.join(__dirname, "output");
   fs.mkdirSync(outDir, { recursive: true });
-  const outName = `waves_${path.basename(windFile, path.extname(windFile))}.csv`;
+  const rpTag = /_rp\.csv$/.test(windFile) ? `${returnPeriod}` : "";
+  const depthTag = depthFt ? `_d${depthFt}ft` : "";
+  const outName = `waves_${path.basename(windFile, path.extname(windFile))}${rpTag}${depthTag}.csv`;
   const outPath = path.join(outDir, outName);
   fs.writeFileSync(
     outPath,
@@ -241,7 +276,9 @@ async function main() {
     fetchFile: path.basename(fetchFile),
     windFile: path.basename(windFile),
     windDesc,
-    settings: `Anemometer height ${anemometerZ} m · stability R_T ${stabilityRT} · fetch units ${unitsArg}`,
+    settings: `Anemometer height ${anemometerZ} m · stability R_T ${stabilityRT} · fetch units ${unitsArg} · ${
+      depthFt ? `avg fetch depth ${depthFt} ft (SPM 1984 shallow-water growth)` : "deep water"
+    }`,
   });
   console.log(`PDF written to: ${pdfPath}\n`);
 }

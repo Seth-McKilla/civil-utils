@@ -4,22 +4,30 @@
  * 2) Filters the wind records by direction:
  *     - Single direction: only keep rows within ±directionRange° of fetchDirection.
  *     - All directions: collect every valid record, then compute results for each 5° step (0–355°).
- * 3) From the filtered data, collect all valid gust speeds.
- * 4) Take only the top X% of gust speeds (where X = percentileValue; e.g., 1 => top 1%).
- * 5) Compute the average gust speed of that upper subset and print the subset's size.
+ * 3) From the filtered data, collect all valid sustained wind speeds (WSPD — gusts are not used).
+ * 4) Mode (last argument):
+ *     - rp (default): extreme value analysis. WSPD records are averaged to hourly winds (≈1-hr sustained,
+ *       consistent with SPM / Smith 1991 wave growth; also filters out minutes-long thunderstorm spikes),
+ *       then the annual maximum hourly wind per direction is fit with a Gumbel distribution (method of
+ *       moments) -> 10, 25, 50 and 100-year return period winds.
+ *     - X (number):   average of the top X% of wind speeds (e.g. 1 => top 1%).
+ *     - max:          single highest recorded wind speed.
  *
  * Usage examples:
+ *   node avg-wind-speeds/ 44062 2010 2025 all 15
+ *   => 10/25/50/100-yr return period sustained winds for every 5° direction (± 15°)
+ *
  *   node avg-wind-speeds/ ncdv2 2015 2024 120 15 1
- *   => station=ncdv2, start=2015, end=2024, direction=120°, tolerance=±15°, top 1% of gusts
+ *   => station=ncdv2, start=2015, end=2024, direction=120°, tolerance=±15°, top 1% of speeds
  *
  *   node avg-wind-speeds/ ncdv2 2015 2024 all 15 1
  *   => same station/years, but computes results for every 5° direction (0°, 5°, 10°, ..., 355°)
  *
  *   node avg-wind-speeds/ ncdv2 2015 2024 120 15 max
- *   => same as first example but returns the single highest recorded gust speed instead of a percentile average
+ *   => same as first example but returns the single highest recorded sustained wind speed instead of a percentile average
  *
  *   node avg-wind-speeds/ ncdv2 2015 2024 all 15 max
- *   => all 5° directions, each returning its single highest recorded gust speed
+ *   => all 5° directions, each returning its single highest recorded sustained wind speed
  */
 
 const https = require("https");
@@ -32,16 +40,25 @@ const startYear = parseInt(process.argv[3]);
 const endYear = parseInt(process.argv[4]);
 const fetchDirectionArg = process.argv[5];
 const directionRange = parseFloat(process.argv[6]) || 15;
-const percentileArg = process.argv[7] || "1";
+const percentileArg = process.argv[7] || "rp";
+const isRpMode = percentileArg === "rp";
 const isMaxMode = percentileArg === "max";
-const percentileValue = isMaxMode ? null : parseFloat(percentileArg) || 1;
+const percentileValue = isMaxMode || isRpMode ? null : parseFloat(percentileArg) || 1;
+
+const RETURN_PERIODS = [10, 25, 50, 100];
+// Years with fewer valid records than this fraction of the median year are skipped (partial deployments/outages)
+const MIN_YEAR_COVERAGE = 0.5;
+// Minimum number of annual maxima needed to fit a direction
+const MIN_YEARS = 5;
+// Minimum records within a clock hour to form an hourly average
+const MIN_RECORDS_PER_HOUR = 3;
 
 const isAllDirections = fetchDirectionArg === "all";
 const fetchDirection = isAllDirections ? null : parseFloat(fetchDirectionArg);
 
-// Single-direction mode: accumulate matching gust speeds directly
-const validGusts = [];
-// All-directions mode: accumulate every valid {wdir, gst} record, filter per direction after
+// Single-direction mode: accumulate matching sustained wind speeds directly
+const validSpeeds = [];
+// All-directions mode: accumulate every valid {wdir, wspd} record, filter per direction after
 const allRecords = [];
 
 /**
@@ -57,7 +74,7 @@ function isDirectionInRange(wdir, target, tolerance) {
  *
  * NOAA stdmet columns:
  *   0: YY  1: MM  2: DD  3: hh  4: mm
- *   5: WDIR (deg)  6: WSPD (m/s)  7: GST (m/s)  ...
+ *   5: WDIR (deg)  6: WSPD (m/s, sustained: 8-min avg on buoys, 2-min on C-MAN)  ...
  */
 function parseFileAsText(fileText) {
   const lines = fileText.split("\n");
@@ -68,15 +85,17 @@ function parseFileAsText(fileText) {
     if (columns.length < 8) continue;
 
     const wdir = parseFloat(columns[5]);
-    const gst = parseFloat(columns[7]);
+    const wspd = parseFloat(columns[6]);
 
     if (isNaN(wdir) || wdir < 0 || wdir > 360) continue;
-    if (isNaN(gst) || gst < 0 || gst > 90) continue;
+    if (isNaN(wspd) || wspd < 0 || wspd > 90) continue;
 
-    if (isAllDirections) {
-      allRecords.push({ wdir, gst });
+    if (isRpMode) {
+      allRecords.push({ hourKey: columns.slice(0, 4).join("-"), year: parseInt(columns[0]), wdir, wspd });
+    } else if (isAllDirections) {
+      allRecords.push({ wdir, wspd });
     } else if (isDirectionInRange(wdir, fetchDirection, directionRange)) {
-      validGusts.push(gst);
+      validSpeeds.push(wspd);
     }
   }
 }
@@ -120,24 +139,24 @@ function fetchAndProcessYear(year) {
 }
 
 /**
- * Compute and print percentile-average gust speed for a set of gust values.
+ * Compute and print percentile-average sustained wind speed for a set of WSPD values.
  * Returns the result object, or null if no data.
  */
-function computePercentileAvg(gusts) {
-  if (gusts.length === 0) return null;
+function computePercentileAvg(speeds) {
+  if (speeds.length === 0) return null;
 
-  gusts.sort((a, b) => b - a);
+  speeds.sort((a, b) => b - a);
 
   if (isMaxMode) {
-    return { total: gusts.length, subsetSize: 1, avg: gusts[0] };
+    return { total: speeds.length, subsetSize: 1, avg: speeds[0] };
   }
 
   const fraction = percentileValue / 100;
-  const cutoffIndex = Math.floor(gusts.length * fraction);
-  const subset = cutoffIndex >= 1 ? gusts.slice(0, cutoffIndex) : gusts;
+  const cutoffIndex = Math.floor(speeds.length * fraction);
+  const subset = cutoffIndex >= 1 ? speeds.slice(0, cutoffIndex) : speeds;
   const avg = subset.reduce((acc, val) => acc + val, 0) / subset.length;
 
-  return { total: gusts.length, subsetSize: subset.length, avg };
+  return { total: speeds.length, subsetSize: subset.length, avg };
 }
 
 function writeCsv(rows, filename) {
@@ -145,7 +164,7 @@ function writeCsv(rows, filename) {
   fs.mkdirSync(outputDir, { recursive: true });
   const filePath = path.join(outputDir, filename);
   const lines = [
-    "direction_deg,total_records,top_n_records,avg_gust_ms",
+    "direction_deg,total_records,top_n_records,avg_wspd_ms",
     ...rows.map(
       (r) =>
         `${r.dir},${r.total},${r.subsetSize},${
@@ -159,15 +178,15 @@ function writeCsv(rows, filename) {
 
 function computeSingleDirection() {
   console.log(
-    `\nFiltering complete. Total data points matching direction criteria: ${validGusts.length}`
+    `\nFiltering complete. Total data points matching direction criteria: ${validSpeeds.length}`
   );
 
-  if (validGusts.length === 0) {
-    console.log("No valid gust data found in that direction range. Exiting.");
+  if (validSpeeds.length === 0) {
+    console.log("No valid wind speed data found in that direction range. Exiting.");
     return;
   }
 
-  const result = computePercentileAvg(validGusts);
+  const result = computePercentileAvg(validSpeeds);
 
   if (result.subsetSize < 1) {
     console.log(
@@ -177,7 +196,7 @@ function computeSingleDirection() {
 
   if (isMaxMode) {
     console.log(
-      `\nMax gust speed: ${result.avg.toFixed(2)} m/s (from ${
+      `\nMax sustained wind speed: ${result.avg.toFixed(2)} m/s (from ${
         result.total
       } total records)\n`
     );
@@ -186,7 +205,7 @@ function computeSingleDirection() {
       `\nTop ${result.subsetSize} records ( = top ${percentileValue}% ) out of ${result.total} total.`
     );
     console.log(
-      `Average gust in that top subset: ${result.avg.toFixed(2)} m/s\n`
+      `Average sustained wind speed in that top subset: ${result.avg.toFixed(2)} m/s\n`
     );
   }
 
@@ -203,7 +222,7 @@ function computeAllDirections() {
     "Dir (°)".padEnd(10),
     "Total".padEnd(8),
     (isMaxMode ? "Max" : `Top ${percentileValue}%`).padEnd(10),
-    "Avg Gust (m/s)",
+    "Avg WSPD (m/s)",
   ].join(" ");
   console.log(header);
   console.log("-".repeat(header.length));
@@ -211,11 +230,11 @@ function computeAllDirections() {
   const rows = [];
 
   for (let dir = 0; dir < 360; dir += 5) {
-    const gusts = allRecords
+    const speeds = allRecords
       .filter((r) => isDirectionInRange(r.wdir, dir, directionRange))
-      .map((r) => r.gst);
+      .map((r) => r.wspd);
 
-    if (gusts.length === 0) {
+    if (speeds.length === 0) {
       console.log(
         `${String(dir).padEnd(10)} ${"0".padEnd(8)} ${"0".padEnd(10)} N/A`
       );
@@ -223,7 +242,7 @@ function computeAllDirections() {
       continue;
     }
 
-    const result = computePercentileAvg(gusts);
+    const result = computePercentileAvg(speeds);
     console.log(
       `${String(dir).padEnd(10)} ${String(result.total).padEnd(8)} ${String(
         result.subsetSize
@@ -240,6 +259,107 @@ function computeAllDirections() {
   writeCsv(rows, filename);
 }
 
+/**
+ * Gumbel (EV1) fit by method of moments; returns x_T for each return period T (years).
+ */
+function gumbelReturnLevels(annualMaxima) {
+  const n = annualMaxima.length;
+  const mean = annualMaxima.reduce((a, b) => a + b, 0) / n;
+  const sd = Math.sqrt(annualMaxima.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1));
+  const alpha = (sd * Math.sqrt(6)) / Math.PI;
+  const u = mean - 0.5772 * alpha;
+  const levels = {};
+  for (const T of RETURN_PERIODS) levels[T] = u - alpha * Math.log(-Math.log(1 - 1 / T));
+  return { n, mean, sd, levels };
+}
+
+/**
+ * Average raw records into hourly winds: scalar mean speed, vector-mean direction.
+ */
+function toHourly(records) {
+  const groups = new Map();
+  for (const r of records) {
+    if (!groups.has(r.hourKey)) groups.set(r.hourKey, []);
+    groups.get(r.hourKey).push(r);
+  }
+  const hourly = [];
+  for (const recs of groups.values()) {
+    if (recs.length < MIN_RECORDS_PER_HOUR) continue;
+    let sx = 0, sy = 0, sum = 0;
+    for (const r of recs) {
+      const a = (r.wdir * Math.PI) / 180;
+      sx += r.wspd * Math.sin(a);
+      sy += r.wspd * Math.cos(a);
+      sum += r.wspd;
+    }
+    const wdir = ((Math.atan2(sx, sy) * 180) / Math.PI + 360) % 360;
+    hourly.push({ year: recs[0].year, wdir, wspd: sum / recs.length });
+  }
+  return hourly;
+}
+
+function computeReturnPeriods() {
+  // Year coverage check (raw records)
+  const perYear = {};
+  for (const r of allRecords) perYear[r.year] = (perYear[r.year] || 0) + 1;
+  const counts = Object.values(perYear).sort((a, b) => a - b);
+  const median = counts[Math.floor(counts.length / 2)] || 0;
+  const goodYears = new Set(
+    Object.keys(perYear)
+      .filter((y) => perYear[y] >= MIN_YEAR_COVERAGE * median)
+      .map(Number)
+  );
+  console.log(`\nTotal valid records collected: ${allRecords.length}`);
+  console.log("Records per year:");
+  for (const y of Object.keys(perYear).sort()) {
+    console.log(`  ${y}: ${perYear[y]}${goodYears.has(Number(y)) ? "" : "  (low coverage - skipped)"}`);
+  }
+  console.log(`Years used: ${goodYears.size}`);
+
+  const hourly = toHourly(allRecords);
+  console.log(`Hourly-averaged winds: ${hourly.length}\n`);
+
+  const dirs = isAllDirections ? Array.from({ length: 72 }, (_, i) => i * 5) : [fetchDirection];
+  const header = ["Dir (°)".padEnd(9), "Years".padEnd(7), "Mean max".padEnd(10), ...RETURN_PERIODS.map((T) => `${T}-yr`.padEnd(8))].join(" ");
+  console.log("Hourly-averaged sustained wind (WSPD, m/s), Gumbel fit of annual maxima");
+  console.log(header);
+  console.log("-".repeat(header.length));
+
+  const rows = [];
+  for (const dir of dirs) {
+    const annualMax = {};
+    for (const r of hourly) {
+      if (!goodYears.has(r.year) || !isDirectionInRange(r.wdir, dir, directionRange)) continue;
+      if (!(r.year in annualMax) || r.wspd > annualMax[r.year]) annualMax[r.year] = r.wspd;
+    }
+    const maxima = Object.values(annualMax);
+    if (maxima.length < MIN_YEARS) {
+      console.log(`${String(dir).padEnd(9)} ${String(maxima.length).padEnd(7)} insufficient data`);
+      rows.push({ dir, n: maxima.length, mean: null, sd: null, levels: {} });
+      continue;
+    }
+    const fit = gumbelReturnLevels(maxima);
+    console.log(
+      [String(dir).padEnd(9), String(fit.n).padEnd(7), fit.mean.toFixed(2).padEnd(10), ...RETURN_PERIODS.map((T) => fit.levels[T].toFixed(2).padEnd(8))].join(" ")
+    );
+    rows.push({ dir, ...fit });
+  }
+
+  const outputDir = path.join(__dirname, "output");
+  fs.mkdirSync(outputDir, { recursive: true });
+  const filename = `${stationId}_${startYear}-${endYear}_${isAllDirections ? "all-dirs" : `dir${fetchDirection}`}_range${directionRange}_rp.csv`;
+  const filePath = path.join(outputDir, filename);
+  const fmt = (v) => (v === null || v === undefined ? "" : v.toFixed(2));
+  fs.writeFileSync(
+    filePath,
+    [
+      `direction_deg,years,mean_annual_max_ms,std_annual_max_ms,${RETURN_PERIODS.map((T) => `rp${T}_wspd_ms`).join(",")}`,
+      ...rows.map((r) => [r.dir, r.n, fmt(r.mean), fmt(r.sd), ...RETURN_PERIODS.map((T) => fmt(r.levels[T]))].join(",")),
+    ].join("\n") + "\n"
+  );
+  console.log(`\nCSV written to: ${filePath}`);
+}
+
 async function main() {
   if (isAllDirections) {
     console.log(
@@ -251,7 +371,7 @@ async function main() {
     );
   }
   console.log(
-    `>>> Mode = ${isMaxMode ? "max gust" : `top ${percentileValue}%`}`
+    `>>> Mode = ${isRpMode ? "return period (Gumbel fit of annual maxima)" : isMaxMode ? "max sustained wind" : `top ${percentileValue}%`}`
   );
   console.log("\nStarting data download and parsing...\n");
 
@@ -260,7 +380,9 @@ async function main() {
     await fetchAndProcessYear(year);
   }
 
-  if (isAllDirections) {
+  if (isRpMode) {
+    computeReturnPeriods();
+  } else if (isAllDirections) {
     computeAllDirections();
   } else {
     computeSingleDirection();

@@ -191,7 +191,7 @@ function writeRosePdf(outPath, { rows, radialsFt, fetchFile, windFile, windDesc,
 
     doc.font("Helvetica").fontSize(7).fillColor(INK_2).text(
       "Bearings are degrees clockwise from north. Wave rose wedges point toward the direction the wind blows FROM; fetch wedges point along the measured radial from the site. " +
-        "Outlined, labeled wedges mark the dominant (largest Hmo) wind direction in each quadrant (N-E, E-S, S-W, W-N); those rows are bold in the table. Hmo uses the 15°-averaged fetch in the Smith wave direction (see table). Duration limits not checked; results are fetch-limited or capped at fully developed.",
+        "Outlined, labeled wedges mark the dominant (largest Hmo) wind direction in each quadrant (N-E, E-S, S-W, W-N); those rows are bold in the table. Hmo uses the 15°-averaged fetch in the Smith wave direction (see table). Duration limits not checked; results are fetch-limited, depth-limited (if a fetch depth is given) or capped at fully developed. Depth-induced breaking at the site is not applied (check H <= ~0.78 x local depth).",
       36, 550, { width: W - 72, lineGap: 0.5 }
     );
 
