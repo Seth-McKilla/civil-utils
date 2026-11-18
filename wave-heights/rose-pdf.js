@@ -99,7 +99,7 @@ function drawRingLabels(doc, cx, cy, scale, step, top, unitLabel, decimals, bear
   }
 }
 
-function writeRosePdf(outPath, { rows, radialsFt, fetchFile, windFile, windDesc, settings }) {
+function writeRosePdf(outPath, { rows, radialsFt, fetchFile, windFile, windDesc, settings, hasToe, capFt }) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: "LETTER", layout: "landscape", margin: 36 });
     const stream = fs.createWriteStream(outPath);
@@ -108,7 +108,8 @@ function writeRosePdf(outPath, { rows, radialsFt, fetchFile, windFile, windDesc,
     stream.on("error", reject);
 
     const W = doc.page.width;
-    const H = rows.map((r) => parseFloat(r.hFt));
+    // Wedges show the offshore Hmo; with a toe depth the breaking limit is drawn as a dashed ring
+    const H = rows.map((r) => parseFloat(r.hOffFt));
     const maxH = Math.max(...H);
     const maxRow = rows[H.indexOf(maxH)];
 
@@ -116,8 +117,9 @@ function writeRosePdf(outPath, { rows, radialsFt, fetchFile, windFile, windDesc,
     doc.font("Helvetica-Bold").fontSize(15).fillColor(INK).text("Projected Wind Waves on Restricted Fetch", 36, 32);
     doc.font("Helvetica").fontSize(8.5).fillColor(INK_2)
       .text(`Smith (1991), USACE CERC-91-2 restricted-fetch method   |   Wind: ${windFile}   |   Fetch: ${fetchFile}`, 36, 52)
-      .text(settings, 36, 64);
-    doc.font("Helvetica-Bold").fillColor(INK).text(windDesc, 36, 76);
+      .text(settings[0], 36, 64)
+      .text(settings[1], 36, 76);
+    doc.font("Helvetica-Bold").fillColor(INK).text(windDesc, 36, 88);
 
     const cy = 318;
     const R = 150;
@@ -125,31 +127,37 @@ function writeRosePdf(outPath, { rows, radialsFt, fetchFile, windFile, windDesc,
     const cxR = W * 0.745;
 
     // --- Left rose: Hmo by wind direction ---
-    doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text("Significant wave height Hmo (ft) by wind direction", cxL - R - 10, 104, { width: 2 * R + 20, align: "center" });
-    const left = drawRoseFrame(doc, cxL, cy, R, maxH, "ft", 1);
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text("Significant wave height Hmo (ft) by wind direction", cxL - R - 10, 112, { width: 2 * R + 20, align: "center" });
+    if (hasToe) {
+      doc.font("Helvetica").fontSize(8).fillColor(INK_2).text(`Dashed ring = depth-limited breaking height at shoreline (${capFt.toFixed(1)} ft)`, cxL - R - 10, 126, { width: 2 * R + 20, align: "center" });
+    }
+    const left = drawRoseFrame(doc, cxL, cy, R, hasToe ? Math.max(maxH, capFt) : maxH, "ft", 1);
     for (const r of rows) {
-      const h = parseFloat(r.hFt);
+      const h = parseFloat(r.hOffFt);
       const c = rampColor(h / maxH);
       drawWedge(doc, cxL, cy, left.scale(h), r.dir, 2.1, c);
     }
     // Dominant (max Hmo) direction in each compass quadrant: outline + label
     const QUADS = [[0, 90], [90, 180], [180, 270], [270, 360]];
     const quadMax = QUADS.map(([a, b]) =>
-      rows.filter((r) => r.dir >= a && r.dir < b).reduce((m, r) => (!m || parseFloat(r.hFt) > parseFloat(m.hFt) ? r : m), null)
+      rows.filter((r) => r.dir >= a && r.dir < b).reduce((m, r) => (!m || parseFloat(r.hOffFt) > parseFloat(m.hOffFt) ? r : m), null)
     ).filter(Boolean);
-    const quietest = quadMax.reduce((m, r) => (parseFloat(r.hFt) < parseFloat(m.hFt) ? r : m));
+    const quietest = quadMax.reduce((m, r) => (parseFloat(r.hOffFt) < parseFloat(m.hOffFt) ? r : m));
     left.ringLabels(Math.floor(quietest.dir / 90) * 90 + 45);
 
     for (const r of quadMax) {
-      const h = parseFloat(r.hFt);
+      const h = parseFloat(r.hOffFt);
       drawWedge(doc, cxL, cy, left.scale(h), r.dir, 2.1, rampColor(h / maxH), true);
+    }
+    if (hasToe) {
+      doc.save().lineWidth(1.5).dash(5, { space: 3 }).strokeColor(INK).circle(cxL, cy, left.scale(capFt)).stroke().undash().restore();
     }
     doc.font("Helvetica-Bold").fontSize(7.5);
     for (const r of quadMax) {
-      const text = `${r.dir}°: ${parseFloat(r.hFt).toFixed(1)} ft`;
+      const text = `${r.dir}°: ${parseFloat(r.hOffFt).toFixed(1)} ft`;
       const w = doc.widthOfString(text);
       // outside the tip, or tucked inside it if the tip is near the rim
-      const rTip = left.scale(parseFloat(r.hFt));
+      const rTip = left.scale(parseFloat(r.hOffFt));
       const inward = rTip > R * 0.75;
       const [x, y] = pt(cxL, cy, inward ? rTip - 6 : rTip + 6, r.dir);
       const sgn = inward ? -1 : 1;
@@ -168,7 +176,7 @@ function writeRosePdf(outPath, { rows, radialsFt, fetchFile, windFile, windDesc,
     const dirs = fetchMi.map((f) => f.dir).sort((a, b) => a - b);
     let spacing = 360;
     for (let i = 1; i < dirs.length; i++) spacing = Math.min(spacing, dirs[i] - dirs[i - 1]);
-    doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text("Measured fetch length (mi) by direction", cxR - R - 10, 104, { width: 2 * R + 20, align: "center" });
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text("Measured fetch length (mi) by direction", cxR - R - 10, 112, { width: 2 * R + 20, align: "center" });
     const right = drawRoseFrame(doc, cxR, cy, R, maxF, "mi", maxF < 4 ? 1 : 0);
     for (const f of fetchMi) drawWedge(doc, cxR, cy, right.scale(f.mi), f.dir, spacing * 0.42, FETCH_FILL);
     right.ringLabels();
@@ -185,13 +193,18 @@ function writeRosePdf(outPath, { rows, radialsFt, fetchFile, windFile, windDesc,
 
     // Callouts
     doc.font("Helvetica-Bold").fontSize(9).fillColor(INK)
-      .text(`Max Hmo = ${maxH.toFixed(1)} ft (Tp ${maxRow.tp} s) for wind from ${maxRow.dir}°`, cxL - R, 536, { width: 2 * R, align: "center" });
+      .text(
+        `Max Hmo = ${maxH.toFixed(1)} ft (Tp ${maxRow.tp} s) for wind from ${maxRow.dir}°` +
+          (hasToe ? `  ->  design H at shoreline = ${parseFloat(maxRow.hFt).toFixed(1)} ft` : ""),
+        cxL - R - 40, 536, { width: 2 * R + 80, align: "center" }
+      );
     const maxFetch = fetchMi.reduce((a, b) => (b.mi > a.mi ? b : a));
     doc.text(`Longest fetch = ${maxFetch.mi.toFixed(2)} mi (${Math.round(maxFetch.mi * FT_PER_MI).toLocaleString()} ft) at ${maxFetch.dir}°`, cxR - R, 536, { width: 2 * R, align: "center" });
 
     doc.font("Helvetica").fontSize(7).fillColor(INK_2).text(
-      "Bearings are degrees clockwise from north. Wave rose wedges point toward the direction the wind blows FROM; fetch wedges point along the measured radial from the site. " +
-        "Outlined, labeled wedges mark the dominant (largest Hmo) wind direction in each quadrant (N-E, E-S, S-W, W-N); those rows are bold in the table. Hmo uses the 15°-averaged fetch in the Smith wave direction (see table). Duration limits not checked; results are fetch-limited, depth-limited (if a fetch depth is given) or capped at fully developed. Depth-induced breaking at the site is not applied (check H <= ~0.78 x local depth).",
+      "Bearings in degrees clockwise from north; wave wedges point to where the wind blows FROM, fetch wedges along the measured radial. " +
+        "Outlined wedges = largest Hmo per quadrant (bold rows in table). Hmo uses the 15°-averaged fetch in the Smith wave direction. " +
+        "Depths are MLLW + design WL. Design H at shoreline = min(Hmo, gamma x (toe depth + WL)) when a toe depth is given. Duration limits not checked.",
       36, 550, { width: W - 72, lineGap: 0.5 }
     );
 
@@ -205,10 +218,10 @@ function writeRosePdf(outPath, { rows, radialsFt, fetchFile, windFile, windDesc,
       ["Wave dir (°)", (r) => r.waveDir],
       ["phi (°)", (r) => r.phi],
       ["Eff. fetch (ft)", (r) => Number(r.fetchFt).toLocaleString()],
-      ["Hmo (ft)", (r) => r.hFt],
+      ...(hasToe ? [["Offshore Hmo (ft)", (r) => r.hOffFt], ["Design H (ft)", (r) => r.hFt]] : [["Hmo (ft)", (r) => r.hFt]]),
       ["Tp (s)", (r) => r.tp],
     ];
-    const colW = 41;
+    const colW = hasToe ? 37 : 41;
     const half = Math.ceil(rows.length / 2);
     [rows.slice(0, half), rows.slice(half)].forEach((chunk, ci) => {
       const x0 = 36 + ci * (cols.length * colW + 28);

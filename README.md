@@ -81,7 +81,7 @@ Computes projected significant wave height (Hmo, ft) and peak period for each wi
 ### Options
 
 ```bash
-node wave-heights [fetchFile] [windCsv] [--rp 25] [--depth <ft>] [--units ft] [--z <m>] [--rt 1.1]
+node wave-heights [fetchFile] [windCsv] [--rp 25] [--depth <ft>] [--wl <ft>] [--toe-depth <ft>] [--gamma 0.78] [--units ft] [--z <m>] [--rt 1.1]
 ```
 
 | Option | Default | Description |
@@ -92,13 +92,17 @@ node wave-heights [fetchFile] [windCsv] [--rp 25] [--depth <ft>] [--units ft] [-
 | `--z` | from NDBC | Anemometer height above water (m). By default it's read from the station's NDBC page (site elevation + anemometer height, e.g. 44062 = 3 m, OCIM2 = 10.5 m), falling back to 10 m with a warning. The wind is adjusted to 10 m by (10/z)^(1/7). |
 | `--rt` | `1.1` | Air–sea stability factor R_T (1.1 = unstable/unknown, per SPM) |
 | `--rp` | `25` | Return period (yr) to use from an `rp` wind CSV: 10, 25, 50 or 100 |
-| `--depth` | none (deep water) | Average water depth along the fetch at the design water level (ft). Applies SPM 1984 shallow-water growth. |
+| `--depth` | none (deep water) | Average water depth along the fetch (ft, **MLLW**). Applies SPM 1984 shallow-water growth using depth + WL. |
+| `--wl` | `0` | Design water level (storm surge/tide) above MLLW (ft). Added to `--depth` and `--toe-depth`. |
+| `--toe-depth` | none | Depth at the shoreline or structure toe (ft, MLLW). Design H = min(Hmo, gamma × (toe depth + WL)). |
+| `--gamma` | `0.78` | Breaker index for the depth-limited cap |
 
 Examples:
 
 ```bash
 pnpm waves                       # 25-yr wind, deep water, anemometer height looked up from NDBC
-pnpm waves --depth 12            # 25-yr wind, 12 ft average fetch depth
+pnpm waves --depth 12            # 25-yr wind, 12 ft MLLW average fetch depth
+pnpm waves --depth 13 --toe-depth 2 --wl 4   # + 4 ft design WL, 2 ft MLLW at the shoreline -> breaking-limited design H
 pnpm waves --rp 50               # 50-yr wind
 pnpm waves --z 3                 # override the anemometer height
 ```
@@ -122,11 +126,13 @@ Written to `wave-heights/output/`:
 4. Wave height and period (Eq. 9): Hmo = 0.0015·(U_A cos φ)·√(F/g), and Tp = 1/fp with fp = 2.6·g^0.72·F^−0.28·(U_A cos φ)^−0.44.
 5. Results are capped at the SPM fully developed limit.
 6. With `--depth`, the Eq. 11 fetch and U_A cos φ are applied to the SPM (1984) shallow-water equations (3-39, 3-40), as Smith 1991 recommends for shallow water. The lower of the deep- and shallow-water heights is reported, labeled `depth-limited`.
+7. With `--toe-depth`, the design height at the shoreline is min(Hmo, gamma × (toe depth + WL)), labeled `breaking-limited` where the cap governs. The PDF wave rose shows offshore Hmo as wedges and the breaking limit as a dashed ring, and the table lists both offshore Hmo and design H.
 
 Limitations:
 - Duration limits are not checked.
 - `rp` winds are hourly averages, so they match the method. Percentile and max winds are raw 8-min or 2-min averages, which is slightly conservative.
-- Depth-induced breaking at the site is not applied. Check H ≤ ~0.78 × the local depth at the structure.
+- Without `--toe-depth`, depth-induced breaking at the shoreline is not applied. Check H ≤ ~0.78 × the local depth.
+- The breaking cap is a simple gamma × depth check. It doesn't model wave transformation (shoaling, refraction, bottom friction) across the nearshore.
 
 ---
 

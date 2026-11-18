@@ -30,7 +30,10 @@
  *
  *   node wave-heights [fetchFile] [windCsv] [--rp 25] [--depth <ft>] [--units ft] [--z <m>] [--rt 1.1]
  *   --rp:    return period (yr) column to use from a return-period wind CSV, default 25
- *   --depth: average water depth along the fetch at the design water level (ft); omit for deep water
+ *   --depth: average water depth along the fetch (ft, MLLW); omit for deep water
+ *   --wl:    design water level above MLLW (ft), added to --depth and --toe-depth, default 0
+ *   --toe-depth: depth at the shoreline/structure toe (ft, MLLW). Design height = min(Hmo, gamma * (toe + wl))
+ *   --gamma: breaker index for the depth-limited cap, default 0.78
  *   --units: fetch length units (ft | m | mi | km | nmi), default ft
  *   --z:     anemometer height above water in metres; default: looked up from the NDBC station page
  *            (site elevation + anemometer height), falling back to 10 m
@@ -59,8 +62,12 @@ const unitsArg = flags.units || "ft";
 const zArg = flags.z || null; // null => look up from NDBC station page
 const rtArg = flags.rt || "1.1";
 const returnPeriod = parseFloat(flags.rp || "25");
-const depthFt = flags.depth ? parseFloat(flags.depth) : null;
-const depthM = depthFt ? depthFt * 0.3048 : null;
+const depthFt = flags.depth ? parseFloat(flags.depth) : null; // MLLW
+const wlFt = flags.wl ? parseFloat(flags.wl) : 0; // design water level above MLLW
+const toeFt = flags["toe-depth"] ? parseFloat(flags["toe-depth"]) : null; // MLLW
+const gamma = flags.gamma ? parseFloat(flags.gamma) : 0.78;
+const depthM = depthFt !== null ? (depthFt + wlFt) * 0.3048 : null;
+const breakingCapFt = toeFt !== null ? gamma * (toeFt + wlFt) : null;
 
 /** Newest file in dir matching extension regex. */
 function newestFile(dir, extRe) {
@@ -267,10 +274,19 @@ async function main() {
   const windDesc = describeWind(windFile);
   console.log(windDesc);
   console.log(`Anemometer height: ${anemometerZ} m above water (${zSource}), stability R_T: ${stabilityRT}`);
-  console.log(depthFt ? `Average fetch depth: ${depthFt} ft (SPM shallow-water growth)\n` : "Deep water (no --depth given)\n");
+  console.log(`Design water level: +${wlFt} ft MLLW${flags.wl ? "" : " (default - pass --wl to set)"}`);
+  console.log(
+    depthFt !== null
+      ? `Average fetch depth: ${depthFt} ft MLLW + ${wlFt} ft WL = ${depthFt + wlFt} ft (SPM shallow-water growth)`
+      : "Deep water (no --depth given)"
+  );
+  if (breakingCapFt !== null) {
+    console.log(`Toe depth: ${toeFt} ft MLLW + ${wlFt} ft WL = ${toeFt + wlFt} ft -> breaking limit ${gamma} x ${toeFt + wlFt} = ${breakingCapFt.toFixed(2)} ft`);
+  }
+  console.log();
 
-  const header = ["Wind Dir", "U (m/s)", "UA (m/s)", "Wave Dir", "φ (°)", "Fetch (ft)", "Hmo (ft)", "Tp (s)", "Condition"];
-  const widths = [9, 9, 9, 9, 6, 11, 9, 7, 16];
+  const header = ["Wind Dir", "U (m/s)", "UA (m/s)", "Wave Dir", "φ (°)", "Fetch (ft)", "Hmo (ft)", "Design H (ft)", "Tp (s)", "Condition"];
+  const widths = [9, 9, 9, 9, 6, 11, 9, 14, 7, 16];
   const fmt = (cells) => cells.map((c, i) => String(c).padEnd(widths[i])).join(" ");
   console.log(fmt(header));
   console.log("-".repeat(fmt(header).length));
@@ -278,6 +294,8 @@ async function main() {
   const rows = [];
   for (const { dir, u } of winds) {
     const r = computeWave(dir, u, fetch);
+    const hOff = r.H * M_TO_FT;
+    const capped = breakingCapFt !== null && hOff > breakingCapFt;
     const row = {
       dir,
       u: u.toFixed(2),
@@ -285,9 +303,10 @@ async function main() {
       waveDir: r.waveDir,
       phi: r.phi,
       fetchFt: (r.F * M_TO_FT).toFixed(0),
-      hFt: (r.H * M_TO_FT).toFixed(2),
+      hOffFt: hOff.toFixed(2),
+      hFt: (capped ? breakingCapFt : hOff).toFixed(2), // design height (plotted)
       tp: r.T.toFixed(2),
-      condition: r.condition,
+      condition: capped ? "breaking-limited" : r.condition,
     };
     rows.push(row);
     console.log(fmt(Object.values(row)));
@@ -296,13 +315,14 @@ async function main() {
   const outDir = path.join(__dirname, "output");
   fs.mkdirSync(outDir, { recursive: true });
   const rpTag = /_rp\.csv$/.test(windFile) ? `${returnPeriod}` : "";
-  const depthTag = depthFt ? `_d${depthFt}ft` : "";
+  const depthTag =
+    (depthFt !== null ? `_d${depthFt}ft` : "") + (toeFt !== null ? `_toe${toeFt}ft` : "") + (wlFt ? `_wl${wlFt}ft` : "");
   const outName = `waves_${path.basename(windFile, path.extname(windFile))}${rpTag}${depthTag}.csv`;
   const outPath = path.join(outDir, outName);
   fs.writeFileSync(
     outPath,
     [
-      "wind_dir_deg,wind_speed_ms,wind_stress_factor_ua_ms,wave_dir_deg,phi_deg,eff_fetch_ft,hmo_ft,tp_s,condition",
+      "wind_dir_deg,wind_speed_ms,wind_stress_factor_ua_ms,wave_dir_deg,phi_deg,eff_fetch_ft,hmo_offshore_ft,design_h_ft,tp_s,condition",
       ...rows.map((r) => Object.values(r).join(",")),
     ].join("\n") + "\n"
   );
@@ -315,9 +335,18 @@ async function main() {
     fetchFile: path.basename(fetchFile),
     windFile: path.basename(windFile),
     windDesc,
-    settings: `Anemometer height ${anemometerZ} m above water (${zSource}) · stability R_T ${stabilityRT} · fetch units ${unitsArg} · ${
-      depthFt ? `avg fetch depth ${depthFt} ft (SPM 1984 shallow-water growth)` : "deep water"
-    }`,
+    settings: [
+      `Anemometer height ${anemometerZ} m above water (${zSource}) · stability R_T ${stabilityRT} · fetch units ${unitsArg}`,
+      [
+        depthFt !== null ? `Avg fetch depth ${depthFt} ft MLLW (SPM 1984 shallow-water growth)` : "Deep water",
+        `design WL +${wlFt} ft MLLW`,
+        breakingCapFt !== null ? `toe depth ${toeFt} ft MLLW -> breaking limit ${gamma} x ${toeFt + wlFt} ft = ${breakingCapFt.toFixed(2)} ft` : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    ],
+    capFt: breakingCapFt,
+    hasToe: breakingCapFt !== null,
   });
   console.log(`PDF written to: ${pdfPath}\n`);
 }
