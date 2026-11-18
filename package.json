@@ -7,7 +7,8 @@
     "props": "node adjacent-properties",
     "wind": "node avg-wind-speeds",
     "kml2csv": "node kml2mdspnad83ftcsv",
-    "txtupdate": "node txt-update"
+    "txtupdate": "node txt-update",
+    "waves": "node wave-heights"
   },
   "keywords": [],
   "author": "",
@@ -15,7 +16,9 @@
   "dependencies": {
     "https": "^1.0.0",
     "node-fetch": "^3.3.2",
+    "pdfkit": "^0.20.2",
     "proj4": "^2.15.0",
+    "xlsx": "^0.18.5",
     "xml2js": "^0.6.2",
     "zlib": "^1.0.5"
   }
