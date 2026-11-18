@@ -28,16 +28,18 @@
  *   pnpm waves
  *   => uses the newest fetch file in wave-heights/input/ and the newest CSV in avg-wind-speeds/output/
  *
- *   node wave-heights [fetchFile] [windCsv] [--rp 25] [--depth <ft>] [--units ft] [--z 10] [--rt 1.1]
+ *   node wave-heights [fetchFile] [windCsv] [--rp 25] [--depth <ft>] [--units ft] [--z <m>] [--rt 1.1]
  *   --rp:    return period (yr) column to use from a return-period wind CSV, default 25
  *   --depth: average water depth along the fetch at the design water level (ft); omit for deep water
  *   --units: fetch length units (ft | m | mi | km | nmi), default ft
- *   --z:     anemometer height in metres, default 10
+ *   --z:     anemometer height above water in metres; default: looked up from the NDBC station page
+ *            (site elevation + anemometer height), falling back to 10 m
  *   --rt:    stability correction R_T, default 1.1
  */
 
 const fs = require("fs");
 const path = require("path");
+const https = require("https");
 const XLSX = require("xlsx");
 const { writeRosePdf } = require("./rose-pdf");
 
@@ -54,7 +56,7 @@ for (let i = 0; i < args.length; i++) {
   else files.push(args[i]);
 }
 const unitsArg = flags.units || "ft";
-const zArg = flags.z || "10";
+const zArg = flags.z || null; // null => look up from NDBC station page
 const rtArg = flags.rt || "1.1";
 const returnPeriod = parseFloat(flags.rp || "25");
 const depthFt = flags.depth ? parseFloat(flags.depth) : null;
@@ -81,7 +83,7 @@ const windFile =
 if (!fetchFile || !windFile) {
   console.log(
     "Put fetch lengths in wave-heights/input/ and run avg-wind-speeds first, or pass paths:\n" +
-      "  node wave-heights [fetchFile] [windCsv] [--rp 25] [--depth <ft>] [--units ft] [--z 10] [--rt 1.1]"
+      "  node wave-heights [fetchFile] [windCsv] [--rp 25] [--depth <ft>] [--units ft] [--z <m>] [--rt 1.1]"
   );
   process.exit(1);
 }
@@ -91,7 +93,32 @@ if (!unitFactor) {
   console.error(`Unknown fetch units "${unitsArg}". Use one of: ${Object.keys(UNIT_TO_M).join(", ")}`);
   process.exit(1);
 }
-const anemometerZ = parseFloat(zArg);
+let anemometerZ = zArg ? parseFloat(zArg) : null;
+let zSource = "--z";
+
+/** Fetch NDBC station page and return anemometer height above water (m), or null. */
+function lookupAnemometerHeight(station) {
+  const url = `https://www.ndbc.noaa.gov/station_page.php?station=${encodeURIComponent(station.toLowerCase())}`;
+  return new Promise((resolve) => {
+    https
+      .get(url, { headers: { "User-Agent": "Mozilla/5.0" } }, (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          return resolve(null);
+        }
+        let html = "";
+        res.on("data", (c) => (html += c));
+        res.on("end", () => {
+          const text = html.replace(/<[^>]*>/g, " ");
+          const anem = text.match(/Anemometer height:\s*([\d.]+)\s*m above site elevation/i);
+          if (!anem) return resolve(null);
+          const site = text.match(/Site elevation:\s*([\d.]+)\s*m above mean sea level/i);
+          resolve(parseFloat(anem[1]) + (site ? parseFloat(site[1]) : 0));
+        });
+      })
+      .on("error", () => resolve(null));
+  });
+}
 const stabilityRT = parseFloat(rtArg);
 
 const norm = (d) => ((Math.round(d) % 360) + 360) % 360;
@@ -219,6 +246,18 @@ function computeWave(windDir, u, fetch) {
 }
 
 async function main() {
+  if (anemometerZ === null) {
+    const station = path.basename(windFile).split("_")[0];
+    const z = await lookupAnemometerHeight(station);
+    if (z) {
+      anemometerZ = z;
+      zSource = `NDBC station page for ${station.toUpperCase()}`;
+    } else {
+      anemometerZ = 10;
+      zSource = `default - could not look up ${station.toUpperCase()} on NDBC; pass --z to set it`;
+      console.warn(`\nWARNING: could not read anemometer height for station "${station}" from NDBC. Using 10 m. Pass --z <m> to override.`);
+    }
+  }
   const radials = readFetches(fetchFile);
   const fetch = buildAveragedFetch(radials);
   const winds = readWinds(windFile);
@@ -227,7 +266,7 @@ async function main() {
   console.log(`Wind file:  ${windFile}`);
   const windDesc = describeWind(windFile);
   console.log(windDesc);
-  console.log(`Anemometer height: ${anemometerZ} m, stability R_T: ${stabilityRT}`);
+  console.log(`Anemometer height: ${anemometerZ} m above water (${zSource}), stability R_T: ${stabilityRT}`);
   console.log(depthFt ? `Average fetch depth: ${depthFt} ft (SPM shallow-water growth)\n` : "Deep water (no --depth given)\n");
 
   const header = ["Wind Dir", "U (m/s)", "UA (m/s)", "Wave Dir", "φ (°)", "Fetch (ft)", "Hmo (ft)", "Tp (s)", "Condition"];
@@ -276,7 +315,7 @@ async function main() {
     fetchFile: path.basename(fetchFile),
     windFile: path.basename(windFile),
     windDesc,
-    settings: `Anemometer height ${anemometerZ} m · stability R_T ${stabilityRT} · fetch units ${unitsArg} · ${
+    settings: `Anemometer height ${anemometerZ} m above water (${zSource}) · stability R_T ${stabilityRT} · fetch units ${unitsArg} · ${
       depthFt ? `avg fetch depth ${depthFt} ft (SPM 1984 shallow-water growth)` : "deep water"
     }`,
   });

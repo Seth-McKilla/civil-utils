@@ -81,7 +81,7 @@ Computes projected significant wave height (Hmo, ft) and peak period for each wi
 ### Options
 
 ```bash
-node wave-heights [fetchFile] [windCsv] [--units ft] [--z 10] [--rt 1.1]
+node wave-heights [fetchFile] [windCsv] [--rp 25] [--depth <ft>] [--units ft] [--z <m>] [--rt 1.1]
 ```
 
 | Option | Default | Description |
@@ -89,7 +89,7 @@ node wave-heights [fetchFile] [windCsv] [--units ft] [--z 10] [--rt 1.1]
 | `fetchFile` | newest in `input/` | Path to a specific fetch lengths file |
 | `windCsv` | newest in `avg-wind-speeds/output/` | Path to a specific wind CSV |
 | `--units` | `ft` | Fetch length units: `ft`, `m`, `mi`, `km`, `nmi` |
-| `--z` | `10` | Anemometer height (m). The wind is adjusted to 10 m by (10/z)^(1/7). Use the station's anemometer height from its NDBC page (e.g. 44062 = 3 m). |
+| `--z` | from NDBC | Anemometer height above water (m). By default it's read from the station's NDBC page (site elevation + anemometer height, e.g. 44062 = 3 m, OCIM2 = 10.5 m), falling back to 10 m with a warning. The wind is adjusted to 10 m by (10/z)^(1/7). |
 | `--rt` | `1.1` | Air–sea stability factor R_T (1.1 = unstable/unknown, per SPM) |
 | `--rp` | `25` | Return period (yr) to use from an `rp` wind CSV: 10, 25, 50 or 100 |
 | `--depth` | none (deep water) | Average water depth along the fetch at the design water level (ft). Applies SPM 1984 shallow-water growth. |
@@ -97,9 +97,10 @@ node wave-heights [fetchFile] [windCsv] [--units ft] [--z 10] [--rt 1.1]
 Examples:
 
 ```bash
-pnpm waves --z 3                 # 25-yr wind, deep water, 44062 anemometer at 3 m
-pnpm waves --z 3 --depth 12      # 25-yr wind, 12 ft average fetch depth
-pnpm waves --z 3 --rp 50         # 50-yr wind
+pnpm waves                       # 25-yr wind, deep water, anemometer height looked up from NDBC
+pnpm waves --depth 12            # 25-yr wind, 12 ft average fetch depth
+pnpm waves --rp 50               # 50-yr wind
+pnpm waves --z 3                 # override the anemometer height
 ```
 
 Output files are tagged with the return period and depth, e.g. `waves_<wind file>25_d12ft.pdf`.
